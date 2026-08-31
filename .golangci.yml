@@ -1,0 +1,87 @@
+version: "2"
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+  tests: true
+
+linters:
+  default: standard   # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    # --- 보안 ---
+    - gosec           # SAST. 이 프로젝트의 핵심 린터
+    - forbidigo       # 프로젝트 금지 API (아래 settings 참고)
+    # --- 정확성 ---
+    - errorlint       # %w 래핑 / errors.Is·As 오용
+    - nilerr          # err != nil 인데 nil 반환
+    - contextcheck    # ctx 전파 누락 (SSH/HTTP/S3 전 구간)
+    - noctx           # ctx 없는 http.Request 금지
+    - bodyclose       # AI API·S3 응답 body 누수
+    - durationcheck   # time.Duration 곱셈 실수
+    - makezero        # make([]T, n) 후 append 실수
+    - rowserrcheck
+    - sqlclosecheck
+    # --- 품질 ---
+    - revive
+    - gocritic
+    - copyloopvar
+    - unconvert
+    - wastedassign
+    - prealloc
+    - perfsprint
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment   # 노이즈 대비 실익 적음
+
+    gosec:
+      severity: low
+      confidence: low
+      config:
+        G302: "0600"   # 파일 퍼미션 (리포트 임시파일)
+        G306: "0600"   # WriteFile 퍼미션
+
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: 'ssh\.InsecureIgnoreHostKey'
+          msg: "호스트 키 검증을 끄지 말 것. knownhosts.New(path)를 쓸 것."
+        - pattern: 'tls\.Config{.*InsecureSkipVerify'
+          msg: "TLS 검증을 끄지 말 것. 내부 서비스는 CA를 RootCAs에 추가할 것."
+        - pattern: 'os\.Getenv'
+          msg: "시크릿은 env가 아니라 파일 마운트(/run/secrets)에서 읽을 것. 설정값이면 //nolint:forbidigo 로 예외 처리."
+
+    revive:
+      rules:
+        - name: context-as-argument
+        - name: error-strings
+        - name: error-return
+        - name: errorf
+        - name: indent-error-flow
+        - name: var-naming
+        - name: unexported-return
+        - name: early-return
+
+    gocritic:
+      enabled-tags: [diagnostic, style, performance]
+      disabled-checks: [whyNoLint, hugeParam, unnamedResult]
+
+  exclusions:
+    generated: lax
+    rules:
+      - path: _test\.go
+        linters: [gosec, errcheck, noctx, forbidigo, prealloc]
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes: [gostodian]

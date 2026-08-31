@@ -1,0 +1,147 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '0 18 * * 0'   # 매주 월 03:00 KST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sec-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------- 취약 의존성
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: SARIF 생성 (게이트 아님)
+        run: |
+          go run golang.org/x/vuln/cmd/govulncheck@latest \
+            -format sarif ./... > govulncheck.sarif || true
+
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: govulncheck.sarif
+          category: govulncheck
+
+      - name: 게이트 — 실제 호출 경로에 취약점 있으면 실패
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  # ---------------------------------------------------------------- Go SAST
+  gosec:
+    name: gosec
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # 서드파티 액션 대신 go run — 공급망 표면을 줄이고 버전을 우리가 통제
+      - name: gosec 실행
+        run: |
+          go run github.com/securego/gosec/v2/cmd/gosec@latest \
+            -no-fail -fmt sarif -out gosec.sarif -severity low -confidence low ./...
+
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: gosec.sarif
+          category: gosec
+
+      - name: 게이트 — MEDIUM 이상이면 실패
+        run: |
+          go run github.com/securego/gosec/v2/cmd/gosec@latest \
+            -severity medium -confidence low ./...
+
+  # ---------------------------------------------------------------- CodeQL
+  # 로그(신뢰 불가 입력) → AI API / 셸 명령으로 흘러가는 taint 경로 추적용.
+  # 퍼블릭 레포에서 무료.
+  codeql:
+    name: codeql
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: go
+          build-mode: autobuild
+          queries: security-extended
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:go"
+
+  # ---------------------------------------------------------------- 시크릿
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # 전체 히스토리 스캔
+
+      - name: gitleaks
+        run: |
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest \
+            git /repo --redact --no-banner --exit-code 1
+
+  # ------------------------------------------------- Dockerfile / compose 설정
+  trivy-config:
+    name: trivy (config)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Dockerfile / compose 오설정 스캔
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w aquasec/trivy:latest config \
+            --severity HIGH,CRITICAL --exit-code 1 .
+
+  # ---------------------------------------------------------------- 이미지
+  trivy-image:
+    name: trivy (image)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: gostodian:scan
+
+      - name: 이미지 취약점 스캔
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 gostodian:scan

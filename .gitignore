@@ -1,1 +1,30 @@
-.idea
+# build
+/bin/
+/dist/
+gostodian
+*.exe
+
+# 시크릿 / 로컬 상태 — 절대 커밋 금지
+/secrets/
+*.pem
+*.key
+id_ed25519*
+id_rsa*
+known_hosts
+.env
+.env.*
+!.env.example
+
+# 점검 산출물
+/reports/
+*.sarif
+
+# go
+*.test
+coverage.out
+coverage.html
+vendor/
+
+# ide
+.idea/
+.vscode/

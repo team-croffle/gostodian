@@ -1,0 +1,65 @@
+name: gostodian
+
+services:
+  gostodian:
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-local}
+    image: gostodian:local
+    restart: unless-stopped
+
+    # --- 런타임 하드닝 ---
+    read_only: true
+    user: "65532:65532"          # distroless nonroot
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    pids_limit: 128
+    mem_limit: 512m
+
+    environment:
+      TZ: Asia/Seoul
+      GOSTODIAN_CONFIG: /etc/gostodian/config.yaml
+      # 시크릿은 값이 아니라 "경로"만 env로 전달한다.
+      # env에 값을 넣으면 docker inspect / 크래시 덤프에 그대로 남음.
+      GOSTODIAN_SSH_KEY_FILE: /run/secrets/ssh_key
+      GOSTODIAN_KNOWN_HOSTS_FILE: /run/secrets/known_hosts
+      GOSTODIAN_AI_API_KEY_FILE: /run/secrets/ai_api_key
+      GOSTODIAN_S3_ACCESS_KEY_FILE: /run/secrets/s3_access_key
+      GOSTODIAN_S3_SECRET_KEY_FILE: /run/secrets/s3_secret_key
+      GOSTODIAN_DISCORD_WEBHOOK_FILE: /run/secrets/discord_webhook
+
+    volumes:
+      - ./config:/etc/gostodian:ro
+
+    secrets:
+      - ssh_key
+      - known_hosts
+      - ai_api_key
+      - s3_access_key
+      - s3_secret_key
+      - discord_webhook
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+secrets:
+  ssh_key:
+    file: ./secrets/id_ed25519
+  known_hosts:
+    file: ./secrets/known_hosts
+  ai_api_key:
+    file: ./secrets/ai_api_key
+  s3_access_key:
+    file: ./secrets/s3_access_key
+  s3_secret_key:
+    file: ./secrets/s3_secret_key
+  discord_webhook:
+    file: ./secrets/discord_webhook

@@ -1,0 +1,32 @@
+# 1차 방어선. CI(2차)와 이중으로 겹치게 두는 게 의도된 구성.
+pre-commit:
+  parallel: true
+  commands:
+    fmt:
+      glob: "*.go"
+      run: ./bin/golangci-lint fmt {staged_files}
+      stage_fixed: true
+
+    lint:
+      glob: "*.go"
+      run: ./bin/golangci-lint run --fast-only {staged_files}
+
+    gitleaks:
+      run: >
+        docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest
+        git /repo --pre-commit --staged --redact --no-banner --exit-code 1
+
+    no-secret-files:
+      run: |
+        if git diff --cached --name-only | grep -Ei '(^|/)(secrets/|\.env$|id_(ed25519|rsa)|.*\.(pem|key)$)'; then
+          echo "시크릿으로 보이는 파일이 스테이징됨. 커밋 중단."
+          exit 1
+        fi
+
+pre-push:
+  parallel: false
+  commands:
+    test:
+      run: go test -race ./...
+    vuln:
+      run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
