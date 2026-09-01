@@ -83,5 +83,8 @@ formatters:
     - gofumpt
     - goimports
   settings:
+    gofumpt:
+      # 모듈명이 한 단계(gostodian)라 미설정 시 stdlib와 같은 그룹으로 본다.
+      module-path: gostodian
     goimports:
       local-prefixes: [gostodian]

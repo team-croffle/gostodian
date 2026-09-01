@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go build -trimpath -buildvcs=false \
       -ldflags="-s -w -buildid= -X main.version=${VERSION} -X main.commit=${COMMIT}" \
-      -o /out/gostodian .
+      -o /out/gostodian ./cmd/gostodian
 
 # ---------------------------------------------------------------- runtime
 # x/crypto/ssh 라이브러리를 쓰면 ssh 바이너리가 필요 없으므로 셸 없는 static 이미지로 내려감.

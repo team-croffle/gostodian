@@ -1,0 +1,8 @@
+server:
+  host: ""
+  port: 22
+  user: gostodian
+
+ssh:
+  identity_file: testdata/dummy_key
+  known_hosts_file: testdata/dummy_known_hosts

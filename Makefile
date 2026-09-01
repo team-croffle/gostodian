@@ -82,7 +82,7 @@ audit: lint vuln sec secrets scan-config ## 보안 전체 점검 (CI와 동일)
 ## ---------------------------------------------------------------- 빌드
 .PHONY: build
 build: ## 로컬 바이너리 빌드
-	@CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o $(BIN_DIR)/gostodian .
+	@CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o $(BIN_DIR)/gostodian ./cmd/gostodian
 
 .PHONY: docker
 docker: ## 컨테이너 이미지 빌드

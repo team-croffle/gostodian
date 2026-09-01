@@ -15,6 +15,9 @@ known_hosts
 .env.*
 !.env.example
 
+# 로컬 실설정 (example만 커밋)
+/config/config.yaml
+
 # 점검 산출물
 /reports/
 *.sarif
@@ -28,3 +31,7 @@ vendor/
 # ide
 .idea/
 .vscode/
+
+# 로컬 기획/로그 — 커밋하지 않음
+/Doc/
+/Raw_Log/

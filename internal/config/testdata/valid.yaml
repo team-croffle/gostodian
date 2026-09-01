@@ -1,0 +1,24 @@
+server:
+  host: homelab.example.internal
+  port: 22
+  user: gostodian
+
+ssh:
+  identity_file: testdata/dummy_key
+  known_hosts_file: testdata/dummy_known_hosts
+  sudo_allowlist: []
+
+pipeline:
+  docker_order: []
+  timeouts:
+    step: 10m
+    reboot: 15m
+
+vpn:
+  required: true
+
+secrets:
+  ai_api_key_file: testdata/dummy_secret
+  s3_access_key_file: testdata/dummy_secret
+  s3_secret_key_file: testdata/dummy_secret
+  discord_webhook_file: testdata/dummy_secret

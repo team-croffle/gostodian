@@ -76,7 +76,7 @@ jobs:
       - name: 바이너리 빌드
         env:
           CGO_ENABLED: "0"
-        run: go build -trimpath -ldflags="-s -w" -o /tmp/gostodian .
+        run: go build -trimpath -ldflags="-s -w" -o /tmp/gostodian ./cmd/gostodian
 
       - name: 컨테이너 이미지 빌드 (push 안 함)
         uses: docker/build-push-action@v6

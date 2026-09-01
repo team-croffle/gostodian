@@ -1,0 +1,30 @@
+# 이 파일을 config/config.yaml 으로 복사한 뒤 값을 채운다.
+# 실주소·실키를 이 example에 넣지 말 것. 시크릿 본문은 secrets/ 파일로만.
+
+server:
+  host: homelab.example.internal
+  port: 22
+  user: gostodian
+
+ssh:
+  identity_file: secrets/id_ed25519
+  known_hosts_file: secrets/known_hosts
+  sudo_allowlist: []
+
+# S3에서 채움. 순서는 코드에 하드코딩하지 않는다.
+pipeline:
+  docker_order: []
+  timeouts:
+    step: 10m
+    reboot: 15m
+
+# S2에서 대상 host:port TCP 프로브 실패를 vpn_required 로 쓸 자리.
+vpn:
+  required: true
+
+# 경로는 compose의 GOSTODIAN_*_FILE 이 있으면 그쪽이 이긴다.
+secrets:
+  ai_api_key_file: secrets/ai_api_key
+  s3_access_key_file: secrets/s3_access_key
+  s3_secret_key_file: secrets/s3_secret_key
+  discord_webhook_file: secrets/discord_webhook
