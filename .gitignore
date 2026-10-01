@@ -32,6 +32,9 @@ vendor/
 .idea/
 .vscode/
 
-# 로컬 기획/로그 — 커밋하지 않음
-/Doc/
+
+# 개발시 참고 문서
+/Docs/   
+# 로그
 /Raw_Log/
+
