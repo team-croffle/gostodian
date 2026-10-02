@@ -3,6 +3,7 @@ package ssh
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"strconv"
@@ -10,6 +11,16 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
+)
+
+// 접속 실패 종류다. Plan 8.1. 여기서는 재시도하지 않고 바로 반환한다.
+var (
+	// ErrAuthFailed는 키나 계정이 거부된 경우다.
+	ErrAuthFailed = errors.New("auth_failed")
+	// ErrHostUnreachable는 제한 시간 초과, 연결 거부, 그 밖의 망 문제다.
+	ErrHostUnreachable = errors.New("host_unreachable")
+	// ErrVPNRequired는 VPN이 필요한데 대상 host:port에 TCP로 닿지 않은 경우다.
+	ErrVPNRequired = errors.New("vpn_required")
 )
 
 // Client는 접속에 필요한 값만 가진다. New에서는 접속하지 않는다.
@@ -20,9 +31,10 @@ type Client struct {
 	identityFile   string
 	knownHostsFile string
 	timeout        time.Duration
+	vpnRequired    bool
 }
 
-func New(host string, port int, user, identityFile, knownHostsFile string, timeout time.Duration) *Client {
+func New(host string, port int, user, identityFile, knownHostsFile string, timeout time.Duration, vpnRequired bool) *Client {
 	return &Client{
 		host:           host,
 		port:           port,
@@ -30,6 +42,7 @@ func New(host string, port int, user, identityFile, knownHostsFile string, timeo
 		identityFile:   identityFile,
 		knownHostsFile: knownHostsFile,
 		timeout:        timeout,
+		vpnRequired:    vpnRequired,
 	}
 }
 
@@ -41,6 +54,12 @@ type Result struct {
 }
 
 func (c *Client) Run(command string) (result Result, err error) {
+	if c.vpnRequired {
+		if perr := c.probeTCP(); perr != nil {
+			return Result{}, perr
+		}
+	}
+
 	privateKey, err := os.ReadFile(c.identityFile)
 	if err != nil {
 		return Result{}, err
@@ -62,10 +81,9 @@ func (c *Client) Run(command string) (result Result, err error) {
 		Timeout:         c.timeout,
 	}
 
-	addr := net.JoinHostPort(c.host, strconv.Itoa(c.port))
-	conn, err := ssh.Dial("tcp", addr, clientConfig)
+	conn, err := ssh.Dial("tcp", c.address(), clientConfig)
 	if err != nil {
-		return Result{}, err
+		return Result{}, classifyDial(err)
 	}
 	defer func() {
 		if cerr := conn.Close(); cerr != nil && err == nil {
@@ -75,7 +93,7 @@ func (c *Client) Run(command string) (result Result, err error) {
 
 	session, err := conn.NewSession()
 	if err != nil {
-		return Result{}, err
+		return Result{}, classifyDial(err)
 	}
 	defer func() {
 		if cerr := session.Close(); cerr != nil && err == nil {
@@ -101,5 +119,55 @@ func (c *Client) Run(command string) (result Result, err error) {
 		result.ExitCode = exitErr.ExitStatus()
 		return result, nil
 	}
-	return result, runErr
+	return result, classifyDial(runErr)
+}
+
+// probeTCP는 SSH 전에 대상 포트가 열리는지 본다. 실패는 VPN 전제가 깨진 것으로 본다.
+func (c *Client) probeTCP() error {
+	conn, err := net.DialTimeout("tcp", c.address(), c.timeout)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrVPNRequired, err)
+	}
+	if cerr := conn.Close(); cerr != nil {
+		return cerr
+	}
+	return nil
+}
+
+func (c *Client) address() string {
+	return net.JoinHostPort(c.host, strconv.Itoa(c.port))
+}
+
+// classifyDial은 접속 에러만 세 종류로 나눈다.
+// 호스트 키 불일치는 그대로 둔다. known_hosts를 갱신해야 하는 경우다.
+func classifyDial(err error) error {
+	var keyErr *knownhosts.KeyError
+	if errors.As(err, &keyErr) {
+		return err
+	}
+
+	var authErr ssh.ServerAuthError
+	if errors.As(err, &authErr) {
+		return fmt.Errorf("%w: %w", ErrAuthFailed, err)
+	}
+	if isHostUnreachable(err) {
+		return fmt.Errorf("%w: %w", ErrHostUnreachable, err)
+	}
+	return err
+}
+
+func isHostUnreachable(err error) bool {
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	return false
 }
