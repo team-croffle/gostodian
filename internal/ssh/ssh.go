@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -86,7 +88,7 @@ func (c *Client) Run(command string) (result Result, err error) {
 		return Result{}, classifyDial(err)
 	}
 	defer func() {
-		if cerr := conn.Close(); cerr != nil && err == nil {
+		if cerr := conn.Close(); cerr != nil && !errors.Is(cerr, io.EOF) && err == nil {
 			err = cerr
 		}
 	}()
@@ -96,7 +98,7 @@ func (c *Client) Run(command string) (result Result, err error) {
 		return Result{}, classifyDial(err)
 	}
 	defer func() {
-		if cerr := session.Close(); cerr != nil && err == nil {
+		if cerr := session.Close(); cerr != nil && !errors.Is(cerr, io.EOF) && err == nil {
 			err = cerr
 		}
 	}()
@@ -146,14 +148,22 @@ func classifyDial(err error) error {
 		return err
 	}
 
-	var authErr ssh.ServerAuthError
-	if errors.As(err, &authErr) {
+	if isAuthFailed(err) {
 		return fmt.Errorf("%w: %w", ErrAuthFailed, err)
 	}
 	if isHostUnreachable(err) {
 		return fmt.Errorf("%w: %w", ErrHostUnreachable, err)
 	}
 	return err
+}
+
+func isAuthFailed(err error) bool {
+	var authErr ssh.ServerAuthError
+	if errors.As(err, &authErr) {
+		return true
+	}
+	// 클라이언트는 ServerAuthError 대신 이 문장을 돌려준다.
+	return strings.Contains(err.Error(), "unable to authenticate")
 }
 
 func isHostUnreachable(err error) bool {
