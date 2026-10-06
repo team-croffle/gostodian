@@ -85,9 +85,9 @@ restrict,command="/usr/local/bin/gostodian-agent",from="<점검머신IP>" ssh-ed
 ### 5. 실행
 
 ```bash
-make build
-./bin/gostodian version
-./bin/gostodian config validate --config config/config.yaml.example
+make build && ./bin/gostodian    # 로컬
+docker compose up -d             # 컨테이너 (권장)
+docker compose logs -f
 ```
 
 ## 개발
