@@ -81,8 +81,9 @@ audit: lint vuln sec secrets scan-config ## 보안 전체 점검 (CI와 동일)
 
 ## ---------------------------------------------------------------- 빌드
 .PHONY: build
-build: ## 로컬 바이너리 빌드
+build: ## 점검 머신용 gostodian, 홈랩용 gostodian-agent
 	@CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o $(BIN_DIR)/gostodian ./cmd/gostodian
+	@CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w" -o $(BIN_DIR)/gostodian-agent ./cmd/gostodian-agent
 
 .PHONY: docker
 docker: ## 컨테이너 이미지 빌드

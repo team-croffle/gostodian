@@ -19,18 +19,11 @@ var (
 	version  = "dev"
 	commit   = "none"
 	errUsage = errors.New("usage")
-
-	// 읽기 명령만. 임의 문자열은 받지 않는다.
-	readCommands = map[string]struct{}{
-		"hostname": {},
-		"uptime":   {},
-		"whoami":   {},
-	}
 )
 
-// runner는 명령 하나를 실행한다. 운영 경로는 *ssh.Client다.
+// runner는 홈랩의 gostodian-agent를 실행한다. 운영 경로는 *ssh.Client다.
 type runner interface {
-	Run(command string) (ssh.Result, error)
+	Run() (ssh.Result, error)
 }
 
 // connect는 설정으로 접속 대상을 만든다. 테스트가 갈아 끼운다.
@@ -42,7 +35,6 @@ var connect = func(cfg config.Config) runner {
 		cfg.SSH.IdentityFile,
 		cfg.SSH.KnownHostsFile,
 		sshDialTimeout,
-		cfg.VPN.Required,
 	)
 }
 
@@ -124,12 +116,8 @@ func runExec(args []string, stdout, stderr io.Writer) error {
 		return errUsage
 	}
 
-	command, ok := readCommand(fs.Args())
-	if !ok {
-		if _, err := fmt.Fprintln(stderr, "usage: gostodian exec [--config PATH] COMMAND"); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintln(stderr, "allowed: hostname, uptime, whoami"); err != nil {
+	if len(fs.Args()) != 0 {
+		if _, err := fmt.Fprintln(stderr, "usage: gostodian exec [--config PATH] [--log-dir DIR]"); err != nil {
 			return err
 		}
 		return errUsage
@@ -153,7 +141,7 @@ func runExec(args []string, stdout, stderr io.Writer) error {
 	if err := lg.Append(runlog.Event{
 		Step:    "exec",
 		Status:  "running",
-		Command: command,
+		Command: ssh.AgentPath,
 		Host:    cfg.Server.Host,
 		User:    cfg.Server.User,
 	}); err != nil {
@@ -163,7 +151,7 @@ func runExec(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	result, runErr := connect(cfg).Run(command)
+	result, runErr := connect(cfg).Run()
 	if result.Stdout != "" {
 		if _, werr := fmt.Fprint(stdout, result.Stdout); werr != nil {
 			return werr
@@ -175,17 +163,17 @@ func runExec(args []string, stdout, stderr io.Writer) error {
 		}
 	}
 
-	recErr := recordExec(lg, cfg, command, result, runErr)
+	recErr := recordExec(lg, cfg, result, runErr)
 	if runErr != nil {
 		return errors.Join(runErr, recErr)
 	}
 	if result.ExitCode != 0 {
-		return errors.Join(fmt.Errorf("remote command %s: exit %d", command, result.ExitCode), recErr)
+		return errors.Join(fmt.Errorf("agent: exit %d", result.ExitCode), recErr)
 	}
 	return recErr
 }
 
-func recordExec(lg *runlog.Log, cfg config.Config, command string, result ssh.Result, runErr error) error {
+func recordExec(lg *runlog.Log, cfg config.Config, result ssh.Result, runErr error) error {
 	status := "ok"
 	var exitCode *int
 	var errText, class string
@@ -198,13 +186,13 @@ func recordExec(lg *runlog.Log, cfg config.Config, command string, result ssh.Re
 		exitCode = &code
 		if code != 0 {
 			status = "failed"
-			errText = fmt.Sprintf("remote command %s: exit %d", command, code)
+			errText = fmt.Sprintf("agent: exit %d", code)
 		}
 	}
 	if err := lg.Step(runlog.Event{
 		Step:     "exec",
 		Status:   status,
-		Command:  command,
+		Command:  ssh.AgentPath,
 		Host:     cfg.Server.Host,
 		User:     cfg.Server.User,
 		ExitCode: exitCode,
@@ -223,22 +211,9 @@ func errorClass(err error) string {
 		return "auth_failed"
 	case errors.Is(err, ssh.ErrHostUnreachable):
 		return "host_unreachable"
-	case errors.Is(err, ssh.ErrVPNRequired):
-		return "vpn_required"
 	default:
 		return ""
 	}
-}
-
-func readCommand(args []string) (string, bool) {
-	if len(args) != 1 {
-		return "", false
-	}
-	command := args[0]
-	if _, ok := readCommands[command]; !ok {
-		return "", false
-	}
-	return command, true
 }
 
 func printUsage(w io.Writer) error {
@@ -247,7 +222,7 @@ func printUsage(w io.Writer) error {
 Usage:
   gostodian version
   gostodian config validate [--config PATH]
-  gostodian exec [--config PATH] [--log-dir DIR] COMMAND
+  gostodian exec [--config PATH] [--log-dir DIR]
 
 `)
 	return err

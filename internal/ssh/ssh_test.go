@@ -17,45 +17,25 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
-func TestRunVPNRequiredWhenPortClosed(t *testing.T) {
+func TestRunHostUnreachableWhenPortClosed(t *testing.T) {
 	port := closedPort(t)
-	client := testClient(t, "127.0.0.1", port, true)
+	client := testClient(t, "127.0.0.1", port)
 
-	_, err := client.Run("hostname")
-	if !errors.Is(err, ErrVPNRequired) {
-		t.Fatalf("error = %v", err)
-	}
-	if errors.Is(err, ErrHostUnreachable) {
-		t.Fatalf("vpn failure classified as host_unreachable: %v", err)
-	}
-}
-
-func TestRunHostUnreachableWhenVPNNotRequired(t *testing.T) {
-	port := closedPort(t)
-	client := testClient(t, "127.0.0.1", port, false)
-
-	_, err := client.Run("hostname")
+	_, err := client.Run()
 	if !errors.Is(err, ErrHostUnreachable) {
 		t.Fatalf("error = %v", err)
 	}
-	if errors.Is(err, ErrVPNRequired) {
-		t.Fatalf("dial failure classified as vpn_required: %v", err)
-	}
 }
 
-func TestRunProbeSuccessDoesNotHideKeyError(t *testing.T) {
-	ln := listenLocal(t)
-	port := ln.Addr().(*net.TCPAddr).Port
-	go acceptAndClose(ln)
-
+func TestRunMissingIdentity(t *testing.T) {
 	dir := t.TempDir()
-	client := New("127.0.0.1", port, "gostodian", filepath.Join(dir, "missing"), filepath.Join(dir, "known_hosts"), time.Second, true)
+	client := New("127.0.0.1", 22, "gostodian", filepath.Join(dir, "missing"), filepath.Join(dir, "known_hosts"), time.Second)
 
-	_, err := client.Run("hostname")
+	_, err := client.Run()
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if errors.Is(err, ErrVPNRequired) || errors.Is(err, ErrAuthFailed) || errors.Is(err, ErrHostUnreachable) {
+	if errors.Is(err, ErrAuthFailed) || errors.Is(err, ErrHostUnreachable) {
 		t.Fatalf("key read classified as dial failure: %v", err)
 	}
 }
@@ -92,11 +72,11 @@ func TestRunFakeSSHSuccess(t *testing.T) {
 		},
 	})
 
-	result, err := client.Run("uptime")
+	result, err := client.Run()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Stdout != "out:uptime\n" || result.Stderr != "err\n" || result.ExitCode != 0 {
+	if result.Stdout != "out:"+AgentPath+"\n" || result.Stderr != "err\n" || result.ExitCode != 0 {
 		t.Fatalf("result = %+v", result)
 	}
 }
@@ -110,7 +90,7 @@ func TestRunFakeSSHExitCode(t *testing.T) {
 		},
 	})
 
-	result, err := client.Run("whoami")
+	result, err := client.Run()
 	if err != nil {
 		t.Fatalf("error = %v", err)
 	}
@@ -129,24 +109,24 @@ func TestRunFakeSSHAuthFailed(t *testing.T) {
 		},
 	})
 
-	_, err := client.Run("hostname")
+	_, err := client.Run()
 	if !errors.Is(err, ErrAuthFailed) {
 		t.Fatalf("error = %v", err)
 	}
-	if errors.Is(err, ErrHostUnreachable) || errors.Is(err, ErrVPNRequired) {
+	if errors.Is(err, ErrHostUnreachable) {
 		t.Fatalf("auth failure reclassified: %v", err)
 	}
 }
 
 func TestRunTimeoutIsHostUnreachable(t *testing.T) {
-	client := testClient(t, "192.0.2.1", 22, false)
+	client := testClient(t, "192.0.2.1", 22)
 	client.timeout = 200 * time.Millisecond
 
-	_, err := client.Run("hostname")
+	_, err := client.Run()
 	if !errors.Is(err, ErrHostUnreachable) {
 		t.Fatalf("error = %v", err)
 	}
-	if errors.Is(err, ErrAuthFailed) || errors.Is(err, ErrVPNRequired) {
+	if errors.Is(err, ErrAuthFailed) {
 		t.Fatalf("timeout reclassified: %v", err)
 	}
 }
@@ -161,12 +141,12 @@ func TestRunFakeSSHHostKeyMismatch(t *testing.T) {
 		},
 	})
 
-	_, err := client.Run("hostname")
+	_, err := client.Run()
 	var keyErr *knownhosts.KeyError
 	if !errors.As(err, &keyErr) {
 		t.Fatalf("error = %v", err)
 	}
-	if errors.Is(err, ErrAuthFailed) || errors.Is(err, ErrHostUnreachable) || errors.Is(err, ErrVPNRequired) {
+	if errors.Is(err, ErrAuthFailed) || errors.Is(err, ErrHostUnreachable) {
 		t.Fatalf("host key mismatch reclassified: %v", err)
 	}
 }
@@ -174,7 +154,7 @@ func TestRunFakeSSHHostKeyMismatch(t *testing.T) {
 func TestClassifyDialKeepsHostKeyMismatch(t *testing.T) {
 	cause := fmt.Errorf("ssh: handshake failed: %w", &knownhosts.KeyError{})
 	err := classifyDial(cause)
-	if errors.Is(err, ErrAuthFailed) || errors.Is(err, ErrHostUnreachable) || errors.Is(err, ErrVPNRequired) {
+	if errors.Is(err, ErrAuthFailed) || errors.Is(err, ErrHostUnreachable) {
 		t.Fatalf("host key mismatch reclassified: %v", err)
 	}
 	var keyErr *knownhosts.KeyError
@@ -189,7 +169,7 @@ func (timeoutNetErr) Error() string   { return "i/o timeout" }
 func (timeoutNetErr) Timeout() bool   { return true }
 func (timeoutNetErr) Temporary() bool { return true }
 
-func testClient(t *testing.T, host string, port int, vpnRequired bool) *Client {
+func testClient(t *testing.T, host string, port int) *Client {
 	t.Helper()
 	dir := t.TempDir()
 	keyPath := filepath.Join(dir, "id_ed25519")
@@ -209,7 +189,7 @@ func testClient(t *testing.T, host string, port int, vpnRequired bool) *Client {
 	if err := os.WriteFile(knownPath, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return New(host, port, "gostodian", keyPath, knownPath, time.Second, vpnRequired)
+	return New(host, port, "gostodian", keyPath, knownPath, time.Second)
 }
 
 func closedPort(t *testing.T) int {
@@ -253,7 +233,7 @@ func newFakeClient(t *testing.T, srv fakeSSH) *Client {
 	}
 	knownPath := writeKnownHosts(t, "127.0.0.1", port, listed)
 	serveSSH(t, ln, hostSigner, clientSigner.PublicKey(), srv)
-	return New("127.0.0.1", port, "gostodian", keyPath, knownPath, 2*time.Second, false)
+	return New("127.0.0.1", port, "gostodian", keyPath, knownPath, 2*time.Second)
 }
 
 func serveSSH(t *testing.T, ln net.Listener, host ssh.Signer, clientKey ssh.PublicKey, srv fakeSSH) {
@@ -367,14 +347,4 @@ func writeKnownHosts(t *testing.T, host string, port int, key ssh.PublicKey) str
 		t.Fatal(err)
 	}
 	return path
-}
-
-func acceptAndClose(ln net.Listener) {
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			return
-		}
-		_ = conn.Close()
-	}
 }

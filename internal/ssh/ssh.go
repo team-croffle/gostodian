@@ -15,14 +15,15 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
-// 접속 실패 종류. Plan 8.1. 여기서는 재시도하지 않고 바로 반환.
+// AgentPath는 홈랩 authorized_keys가 고정하는 실행 파일
+const AgentPath = "/usr/local/bin/gostodian-agent"
+
+// 접속 실패 종류. 재시도 없이 바로 반환.
 var (
 	// ErrAuthFailed는 키나 계정이 거부된 경우
 	ErrAuthFailed = errors.New("auth_failed")
 	// ErrHostUnreachable는 제한 시간 초과, 연결 거부, 그 밖의 망 문제
 	ErrHostUnreachable = errors.New("host_unreachable")
-	// ErrVPNRequired는 VPN이 필요한데 대상 host:port에 TCP로 연결 안 된 경우
-	ErrVPNRequired = errors.New("vpn_required")
 )
 
 // Client는 접속에 필요한 값만 가짐. New에서는 접속하지 않음
@@ -33,10 +34,9 @@ type Client struct {
 	identityFile   string
 	knownHostsFile string
 	timeout        time.Duration
-	vpnRequired    bool
 }
 
-func New(host string, port int, user, identityFile, knownHostsFile string, timeout time.Duration, vpnRequired bool) *Client {
+func New(host string, port int, user, identityFile, knownHostsFile string, timeout time.Duration) *Client {
 	return &Client{
 		host:           host,
 		port:           port,
@@ -44,7 +44,6 @@ func New(host string, port int, user, identityFile, knownHostsFile string, timeo
 		identityFile:   identityFile,
 		knownHostsFile: knownHostsFile,
 		timeout:        timeout,
-		vpnRequired:    vpnRequired,
 	}
 }
 
@@ -55,13 +54,8 @@ type Result struct {
 	ExitCode int
 }
 
-func (c *Client) Run(command string) (result Result, err error) {
-	if c.vpnRequired {
-		if perr := c.probeTCP(); perr != nil {
-			return Result{}, perr
-		}
-	}
-
+// Run은 AgentPath만 실행하고 출력을 돌려줌. 호출자가 명령을 고르지 않음
+func (c *Client) Run() (result Result, err error) {
 	privateKey, err := os.ReadFile(c.identityFile)
 	if err != nil {
 		return Result{}, err
@@ -107,7 +101,7 @@ func (c *Client) Run(command string) (result Result, err error) {
 	session.Stdout = &stdout
 	session.Stderr = &stderr
 
-	runErr := session.Run(command)
+	runErr := session.Run(AgentPath)
 	result = Result{
 		Stdout: stdout.String(),
 		Stderr: stderr.String(),
@@ -124,23 +118,11 @@ func (c *Client) Run(command string) (result Result, err error) {
 	return result, classifyDial(runErr)
 }
 
-// probeTCP는 SSH 전에 대상 포트가 열리는지 확인. 실패는 VPN 전제가 깨진 것으로 처리	
-func (c *Client) probeTCP() error {
-	conn, err := net.DialTimeout("tcp", c.address(), c.timeout)
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrVPNRequired, err)
-	}
-	if cerr := conn.Close(); cerr != nil {
-		return cerr
-	}
-	return nil
-}
-
 func (c *Client) address() string {
 	return net.JoinHostPort(c.host, strconv.Itoa(c.port))
 }
 
-// classifyDial은 접속 에러만 세 종류로 분류
+// classifyDial은 접속 에러를 auth_failed, host_unreachable로 분류
 // 호스트 키 불일치는 그대로 두고, known_hosts를 갱신해야 하는 경우만 처리
 func classifyDial(err error) error {
 	var keyErr *knownhosts.KeyError

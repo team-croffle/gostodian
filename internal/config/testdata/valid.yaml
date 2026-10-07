@@ -14,9 +14,6 @@ pipeline:
     step: 10m
     reboot: 15m
 
-vpn:
-  required: true
-
 secrets:
   ai_api_key_file: testdata/dummy_secret
   s3_access_key_file: testdata/dummy_secret

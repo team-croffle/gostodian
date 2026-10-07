@@ -18,7 +18,6 @@ type Config struct {
 	Server   ServerConfig   `yaml:"server"`
 	SSH      SSHConfig      `yaml:"ssh"`
 	Pipeline PipelineConfig `yaml:"pipeline"`
-	VPN      VPNConfig      `yaml:"vpn"`
 	Secrets  SecretsConfig  `yaml:"secrets"`
 }
 
@@ -37,10 +36,6 @@ type SSHConfig struct {
 type PipelineConfig struct {
 	DockerOrder []string          `yaml:"docker_order"`
 	Timeouts    map[string]string `yaml:"timeouts"`
-}
-
-type VPNConfig struct {
-	Required bool `yaml:"required"`
 }
 
 // SecretsConfig는 AI/S3/Discord 시크릿의 파일 경로만 가진다.

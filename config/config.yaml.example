@@ -18,10 +18,6 @@ pipeline:
     step: 10m
     reboot: 15m
 
-# S2에서 대상 host:port TCP 프로브 실패를 vpn_required 로 쓸 자리.
-vpn:
-  required: true
-
 # 경로는 compose의 GOSTODIAN_*_FILE 이 있으면 그쪽이 이긴다.
 secrets:
   ai_api_key_file: secrets/ai_api_key

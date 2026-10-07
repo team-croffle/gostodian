@@ -66,7 +66,7 @@ func TestNoArgs(t *testing.T) {
 	}
 }
 
-func TestExecRejectsArbitraryCommand(t *testing.T) {
+func TestExecRejectsExtraArgs(t *testing.T) {
 	restoreConnect(t)
 	called := false
 	connect = func(config.Config) runner {
@@ -80,9 +80,9 @@ func TestExecRejectsArbitraryCommand(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	if called {
-		t.Fatal("rejected command still connected")
+		t.Fatal("extra args still connected")
 	}
-	if !strings.Contains(stderr.String(), "allowed:") {
+	if !strings.Contains(stderr.String(), "usage: gostodian exec") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
@@ -90,12 +90,10 @@ func TestExecRejectsArbitraryCommand(t *testing.T) {
 func TestExecCallsRun(t *testing.T) {
 	restoreConnect(t)
 	var gotCfg config.Config
-	var gotCommand string
 	connect = func(cfg config.Config) runner {
 		gotCfg = cfg
 		return stubRunner{
-			run: func(command string) (ssh.Result, error) {
-				gotCommand = command
+			run: func() (ssh.Result, error) {
 				return ssh.Result{Stdout: "ok\n", Stderr: "warn\n"}, nil
 			},
 		}
@@ -104,14 +102,8 @@ func TestExecCallsRun(t *testing.T) {
 	example := filepath.Join("..", "..", "config", "config.yaml.example")
 	logDir := t.TempDir()
 	var stdout, stderr bytes.Buffer
-	if err := run([]string{"exec", "--config", example, "--log-dir", logDir, "uptime"}, &stdout, &stderr); err != nil {
+	if err := run([]string{"exec", "--config", example, "--log-dir", logDir}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
-	}
-	if gotCommand != "uptime" {
-		t.Fatalf("command = %q", gotCommand)
-	}
-	if !gotCfg.VPN.Required {
-		t.Fatal("vpn.required was not passed")
 	}
 	if gotCfg.Server.User != "gostodian" {
 		t.Fatalf("user = %q", gotCfg.Server.User)
@@ -123,7 +115,7 @@ func TestExecCallsRun(t *testing.T) {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	history := readHistory(t, logDir)
-	if history.Status != "ok" || len(history.Steps) != 1 || history.Steps[0].Command != "uptime" {
+	if history.Status != "ok" || len(history.Steps) != 1 || history.Steps[0].Command != ssh.AgentPath {
 		t.Fatalf("history = %+v", history)
 	}
 	if strings.Contains(historyText(t, logDir), "id_ed25519") {
@@ -135,7 +127,7 @@ func TestExecRemoteExit(t *testing.T) {
 	restoreConnect(t)
 	connect = func(config.Config) runner {
 		return stubRunner{
-			run: func(string) (ssh.Result, error) {
+			run: func() (ssh.Result, error) {
 				return ssh.Result{Stdout: "no\n", ExitCode: 1}, nil
 			},
 		}
@@ -143,7 +135,7 @@ func TestExecRemoteExit(t *testing.T) {
 
 	example := filepath.Join("..", "..", "config", "config.yaml.example")
 	var stdout bytes.Buffer
-	err := run([]string{"exec", "--config", example, "--log-dir", t.TempDir(), "whoami"}, &stdout, io.Discard)
+	err := run([]string{"exec", "--config", example, "--log-dir", t.TempDir()}, &stdout, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "exit 1") {
 		t.Fatalf("err = %v", err)
 	}
@@ -156,7 +148,7 @@ func TestExecReturnsDialError(t *testing.T) {
 	restoreConnect(t)
 	connect = func(config.Config) runner {
 		return stubRunner{
-			run: func(string) (ssh.Result, error) {
+			run: func() (ssh.Result, error) {
 				return ssh.Result{}, ssh.ErrAuthFailed
 			},
 		}
@@ -164,7 +156,7 @@ func TestExecReturnsDialError(t *testing.T) {
 
 	example := filepath.Join("..", "..", "config", "config.yaml.example")
 	logDir := t.TempDir()
-	err := run([]string{"exec", "--config", example, "--log-dir", logDir, "hostname"}, io.Discard, io.Discard)
+	err := run([]string{"exec", "--config", example, "--log-dir", logDir}, io.Discard, io.Discard)
 	if !errors.Is(err, ssh.ErrAuthFailed) {
 		t.Fatalf("err = %v", err)
 	}
@@ -221,11 +213,14 @@ func readSuffix(t *testing.T, dir, suffix string) []byte {
 }
 
 type stubRunner struct {
-	run func(command string) (ssh.Result, error)
+	run func() (ssh.Result, error)
 }
 
-func (s stubRunner) Run(command string) (ssh.Result, error) {
-	return s.run(command)
+func (s stubRunner) Run() (ssh.Result, error) {
+	if s.run == nil {
+		return ssh.Result{}, nil
+	}
+	return s.run()
 }
 
 func restoreConnect(t *testing.T) {
