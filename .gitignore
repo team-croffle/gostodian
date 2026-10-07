@@ -1,7 +1,7 @@
 # build
 /bin/
 /dist/
-gostodian
+/gostodian
 *.exe
 
 # 시크릿 / 로컬 상태 — 절대 커밋 금지

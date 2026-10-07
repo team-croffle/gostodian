@@ -14,8 +14,8 @@ import (
 
 const stderrLimit = 500
 
-// Log는 실행 ID 하나의 구조화 로그와 단계 이력이다.
-// JSON 줄은 진행 기록이고, Finish가 성공/실패 파일을 남긴다.
+// Log는 실행 ID 하나의 구조화 로그와 단계 이력
+// JSON: 진행 기록, Finish: 성공/실패 파일 생성
 type Log struct {
 	id             string
 	dir            string
@@ -25,7 +25,7 @@ type Log struct {
 	fileClosed     bool
 }
 
-// Event는 구조화 로그 한 줄이자 이력의 단계 하나다.
+// Event는 구조화 로그 한 줄이자 이력의 단계 하나
 type Event struct {
 	Time        time.Time `json:"time"`
 	ExecutionID string    `json:"execution_id"`
@@ -40,14 +40,14 @@ type Event struct {
 	Stderr      string    `json:"stderr,omitempty"`
 }
 
-// History는 실행 하나의 성공/실패 파일이다.
+// History는 실행 하나의 성공/실패 파일
 type History struct {
 	ExecutionID string  `json:"execution_id"`
 	Status      string  `json:"status"`
 	Steps       []Event `json:"steps"`
 }
 
-// Open은 dir 아래에 새 실행 로그를 만든다. dir이 없으면 만든다.
+// Open은 dir 아래에 새 실행 로그 생성. dir이 없으면 생성
 func Open(dir string) (*Log, error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, errors.New("log dir is empty")
