@@ -12,7 +12,8 @@ import (
 // bootIDPath는 부팅마다 바뀌는 커널 값이다. 읽기만 한다.
 const bootIDPath = "/proc/sys/kernel/random/boot_id"
 
-// allowedNames는 이름 검사에 쓰는 홈랩 허용 목록이다. 이 버전에는 서비스 이름이 없다.
+// allowedNames는 이름 검사에 쓰는 홈랩 허용 목록이다.
+// 바이너리에 서비스 이름을 넣지 않는다. 목록은 홈랩 운영 준비에서 채운다.
 var allowedNames = map[string]struct{}{}
 
 // readBootID는 boot_id 파일을 읽는다. 테스트가 갈아 끼운다.
@@ -40,19 +41,25 @@ func execute(command string, stdout, stderr io.Writer, names map[string]struct{}
 }
 
 // handle는 동사 또는 동사 이름만 통과시킨다. 거부된 문자열은 run으로 넘기지 않는다.
+// stop·start의 실제 정지는 3.3에서 붙인다. 여기서는 허용 목록 검사만 한다.
 func handle(command string, names map[string]struct{}, run func(string) ([]byte, error)) (string, error) {
 	verb, name, err := parseCommand(command, names)
 	if err != nil {
 		return "", err
 	}
-	if name != "" {
-		return "", nil
-	}
 	switch verb {
 	case "status":
+		if name != "" {
+			return "", nil
+		}
 		return inspect(run)
 	case "boot-id":
+		if name != "" {
+			return "", nil
+		}
 		return bootID(readBootID)
+	case "stop", "start":
+		return "", nil
 	default:
 		return "", rejected("verb", command)
 	}
@@ -80,17 +87,28 @@ func parseCommand(command string, names map[string]struct{}) (string, string, er
 		return "", "", rejected("args", command)
 	}
 	verb := fields[0]
-	if verb != "status" && verb != "boot-id" {
+	switch verb {
+	case "status", "boot-id":
+		if len(fields) == 1 {
+			return verb, "", nil
+		}
+		name := fields[1]
+		if _, ok := names[name]; !ok {
+			return "", "", rejected("name", command)
+		}
+		return verb, name, nil
+	case "stop", "start":
+		if len(fields) != 2 {
+			return "", "", rejected("name", command)
+		}
+		name := fields[1]
+		if _, ok := names[name]; !ok {
+			return "", "", rejected("name", command)
+		}
+		return verb, name, nil
+	default:
 		return "", "", rejected("verb", command)
 	}
-	if len(fields) == 1 {
-		return verb, "", nil
-	}
-	name := fields[1]
-	if _, ok := names[name]; !ok {
-		return "", "", rejected("name", command)
-	}
-	return verb, name, nil
 }
 
 func rejected(kind, command string) error {

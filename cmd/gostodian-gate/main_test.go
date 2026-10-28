@@ -105,12 +105,41 @@ func TestHandleRejectsUnknownName(t *testing.T) {
 	names := map[string]struct{}{"redis": {}}
 	assertRejected(t, "status red", names, "rejected: name")
 	assertRejected(t, "status redis-extra", names, "rejected: name")
+	assertRejected(t, "stop red", names, "rejected: name")
+	assertRejected(t, "start redis-extra", names, "rejected: name")
+	assertRejected(t, "stop", names, "rejected: name")
+	assertRejected(t, "start", nil, "rejected: name")
 }
 
 func TestHandleRejectsExtraArgs(t *testing.T) {
 	names := map[string]struct{}{"redis": {}}
 	assertRejected(t, "status redis extra", names, "rejected: args")
 	assertRejected(t, "boot-id redis now", names, "rejected: args")
+	assertRejected(t, "stop redis extra", names, "rejected: args")
+	assertRejected(t, "start redis now", names, "rejected: args")
+}
+
+func TestHandleStopStartAllowExactNameWithoutRunning(t *testing.T) {
+	names := map[string]struct{}{"redis": {}}
+	for _, command := range []string{"stop redis", "start redis"} {
+		text, err := handle(command, names, func(name string) ([]byte, error) {
+			t.Fatalf("executed %s for %q", name, command)
+			return nil, nil
+		})
+		if err != nil {
+			t.Fatalf("%q: %v", command, err)
+		}
+		if text != "" {
+			t.Fatalf("%q text = %q", command, text)
+		}
+	}
+}
+
+func TestHandleRejectedStopStartNameDoesNotRun(t *testing.T) {
+	names := map[string]struct{}{"redis": {}}
+	for _, command := range []string{"stop postgres", "start traefik", "stop redis;reboot"} {
+		assertRejected(t, command, names, "rejected: name")
+	}
 }
 
 func TestHandleRejectsEmpty(t *testing.T) {
