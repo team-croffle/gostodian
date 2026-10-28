@@ -114,6 +114,48 @@ func TestRunSendsStatusWithoutShell(t *testing.T) {
 	}
 }
 
+func TestGateCommandStopStart(t *testing.T) {
+	got, err := gateCommand(StopVerb, "svc-a")
+	if err != nil || got != "stop svc-a" {
+		t.Fatalf("stop = %q %v", got, err)
+	}
+	got, err = gateCommand(StartVerb, "svc-b")
+	if err != nil || got != "start svc-b" {
+		t.Fatalf("start = %q %v", got, err)
+	}
+	if _, err := gateCommand(StopVerb, ""); err == nil {
+		t.Fatal("empty name")
+	}
+	if _, err := gateCommand(StopVerb, "svc a"); err == nil {
+		t.Fatal("spaced name")
+	}
+	if _, err := gateCommand(StatusCommand, "svc-a"); err == nil {
+		t.Fatal("status with name")
+	}
+}
+
+func TestRunVerbSendsStop(t *testing.T) {
+	got := make(chan string, 1)
+	client := newFakeClient(t, fakeSSH{
+		allow:      true,
+		hostListed: true,
+		onExec: func(command string) (string, string, int) {
+			got <- command
+			return "stopped\n", "", 0
+		},
+	})
+	result, err := client.RunVerb(StopVerb, "svc-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Stdout != "stopped\n" {
+		t.Fatalf("result = %+v", result)
+	}
+	if command := <-got; command != "stop svc-a" {
+		t.Fatalf("command = %q", command)
+	}
+}
+
 func TestRunFakeSSHExitCode(t *testing.T) {
 	client := newFakeClient(t, fakeSSH{
 		allow:      true,

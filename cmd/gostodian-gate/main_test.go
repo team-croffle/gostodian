@@ -119,24 +119,56 @@ func TestHandleRejectsExtraArgs(t *testing.T) {
 	assertRejected(t, "start redis now", names, "rejected: args")
 }
 
-func TestHandleStopStartAllowExactNameWithoutRunning(t *testing.T) {
+func TestHandleStopStartRunsServiceAction(t *testing.T) {
 	names := map[string]struct{}{"redis": {}}
+	prev := runService
+	t.Cleanup(func() { runService = prev })
+	var got []string
+	runService = func(verb, name string) ([]byte, error) {
+		got = append(got, verb+" "+name)
+		return []byte(verb + " ok\n"), nil
+	}
 	for _, command := range []string{"stop redis", "start redis"} {
-		text, err := handle(command, names, func(name string) ([]byte, error) {
-			t.Fatalf("executed %s for %q", name, command)
+		text, err := handle(command, names, func(check string) ([]byte, error) {
+			t.Fatalf("status check %s for %q", check, command)
 			return nil, nil
 		})
 		if err != nil {
 			t.Fatalf("%q: %v", command, err)
 		}
-		if text != "" {
+		if !strings.Contains(text, "ok") {
 			t.Fatalf("%q text = %q", command, text)
 		}
+	}
+	if strings.Join(got, ",") != "stop redis,start redis" {
+		t.Fatalf("got = %v", got)
+	}
+}
+
+func TestHandleStopStartFailure(t *testing.T) {
+	names := map[string]struct{}{"redis": {}}
+	prev := runService
+	t.Cleanup(func() { runService = prev })
+	runService = func(string, string) ([]byte, error) {
+		return nil, errors.New("down failed")
+	}
+	_, err := handle("stop redis", names, func(string) ([]byte, error) {
+		t.Fatal("status check ran")
+		return nil, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "stop redis") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestHandleRejectedStopStartNameDoesNotRun(t *testing.T) {
 	names := map[string]struct{}{"redis": {}}
+	prev := runService
+	t.Cleanup(func() { runService = prev })
+	runService = func(verb, name string) ([]byte, error) {
+		t.Fatalf("executed %s %s", verb, name)
+		return nil, nil
+	}
 	for _, command := range []string{"stop postgres", "start traefik", "stop redis;reboot"} {
 		assertRejected(t, command, names, "rejected: name")
 	}

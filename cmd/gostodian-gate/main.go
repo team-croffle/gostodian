@@ -21,6 +21,17 @@ var readBootID = func() ([]byte, error) {
 	return os.ReadFile(bootIDPath)
 }
 
+// runService는 허용된 stop·start만 실행한다. 인자로만 넘기고 셸로 조립하지 않는다.
+// 홈랩의 고정 헬퍼 경로다. sudoers 등록은 3.5 운영 준비.
+var runService = func(verb, name string) ([]byte, error) {
+	switch verb {
+	case "stop", "start":
+		return exec.Command("sudo", "-n", "/usr/local/libexec/gostodian-svc", verb, name).Output()
+	default:
+		return nil, errors.New("not allowed")
+	}
+}
+
 func main() {
 	// 프로세스 인자는 쓰지 않는다. 입력은 SSH_ORIGINAL_COMMAND 하나다.
 	if err := execute(os.Getenv("SSH_ORIGINAL_COMMAND"), os.Stdout, os.Stderr, allowedNames, runCheck); err != nil {
@@ -40,8 +51,7 @@ func execute(command string, stdout, stderr io.Writer, names map[string]struct{}
 	return err
 }
 
-// handle는 동사 또는 동사 이름만 통과시킨다. 거부된 문자열은 run으로 넘기지 않는다.
-// stop·start의 실제 정지는 3.3에서 붙인다. 여기서는 허용 목록 검사만 한다.
+// handle는 동사 또는 동사 이름만 통과시킨다. 거부된 문자열은 run·runService로 넘기지 않는다.
 func handle(command string, names map[string]struct{}, run func(string) ([]byte, error)) (string, error) {
 	verb, name, err := parseCommand(command, names)
 	if err != nil {
@@ -59,10 +69,19 @@ func handle(command string, names map[string]struct{}, run func(string) ([]byte,
 		}
 		return bootID(readBootID)
 	case "stop", "start":
-		return "", nil
+		return applyService(verb, name, runService)
 	default:
 		return "", rejected("verb", command)
 	}
+}
+
+// applyService는 이미 허용된 이름에만 stop·start를 실행한다.
+func applyService(verb, name string, run func(string, string) ([]byte, error)) (string, error) {
+	out, err := run(verb, name)
+	if err != nil {
+		return "", fmt.Errorf("%s %s: %w", verb, name, err)
+	}
+	return string(out), nil
 }
 
 // bootID는 boot_id 파일의 값 한 줄을 돌려준다. 명령은 실행하지 않는다.

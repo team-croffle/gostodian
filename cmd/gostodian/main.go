@@ -10,6 +10,7 @@ import (
 
 	"gostodian/internal/config"
 	"gostodian/internal/discord"
+	"gostodian/internal/pipeline"
 	"gostodian/internal/runlog"
 	"gostodian/internal/ssh"
 	"gostodian/internal/vpn"
@@ -23,9 +24,10 @@ var (
 	errUsage = errors.New("usage")
 )
 
-// runner는 홈랩 게이트의 status를 실행한다. 운영 경로는 *ssh.Client다.
+// runner는 홈랩 게이트 동사를 실행한다. 운영 경로는 *ssh.Client다.
 type runner interface {
 	Run() (ssh.Result, error)
+	RunVerb(verb, name string) (ssh.Result, error)
 }
 
 // requireVPN은 다이얼 전에 VPN 인터페이스를 확인한다. 테스트가 갈아 끼운다.
@@ -175,19 +177,106 @@ func runSub(args []string, stdout, stderr io.Writer) error {
 		return finishRun(lg, cfg, ssh.Result{}, err)
 	}
 
-	result, runErr := connect(cfg).Run()
+	client := connect(cfg)
+	result, runErr := client.Run()
+	if err := writeResult(stdout, stderr, result); err != nil {
+		return err
+	}
+	if runErr != nil || result.ExitCode != 0 {
+		return finishRun(lg, cfg, result, runErr)
+	}
+	if _, err := recordRun(lg, cfg, result, nil); err != nil {
+		return err
+	}
+
+	if err := runStopStart(lg, cfg, client, stdout, stderr); err != nil {
+		noteErr := deliver(lg, cfg, discord.Notice{
+			Kind:        discord.KindFailed,
+			ExecutionID: lg.ID(),
+			Host:        cfg.Server.Host,
+			User:        cfg.Server.User,
+			Command:     "stop/start",
+			Status:      "failed",
+		})
+		finErr := lg.Finish("failed")
+		return errors.Join(err, noteErr, finErr)
+	}
+
+	noteErr := deliver(lg, cfg, checkNotice(lg.ID(), cfg, result, nil))
+	finErr := lg.Finish("ok")
+	return errors.Join(noteErr, finErr)
+}
+
+func writeResult(stdout, stderr io.Writer, result ssh.Result) error {
 	if result.Stdout != "" {
-		if _, werr := fmt.Fprint(stdout, result.Stdout); werr != nil {
-			return werr
+		if _, err := fmt.Fprint(stdout, result.Stdout); err != nil {
+			return err
 		}
 	}
 	if result.Stderr != "" {
-		if _, werr := fmt.Fprint(stderr, runlog.Redact(result.Stderr)); werr != nil {
-			return werr
+		if _, err := fmt.Fprint(stderr, runlog.Redact(result.Stderr)); err != nil {
+			return err
 		}
 	}
+	return nil
+}
 
-	return finishRun(lg, cfg, result, runErr)
+// runStopStart는 설정 목록 순서로 정지하고 역순으로 기동한다.
+// 서비스마다 결과를 확인한 뒤에만 다음으로 진행한다.
+func runStopStart(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr io.Writer) error {
+	for _, name := range pipeline.StopOrder(cfg.Pipeline.DockerOrder) {
+		if err := runOneService(lg, cfg, client, ssh.StopVerb, name, stdout, stderr); err != nil {
+			return err
+		}
+	}
+	for _, name := range pipeline.StartOrder(cfg.Pipeline.DockerOrder) {
+		if err := runOneService(lg, cfg, client, ssh.StartVerb, name, stdout, stderr); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runOneService(lg *runlog.Log, cfg config.Config, client runner, verb, name string, stdout, stderr io.Writer) error {
+	command := verb + " " + name
+	result, runErr := client.RunVerb(verb, name)
+	if err := writeResult(stdout, stderr, result); err != nil {
+		return err
+	}
+	status := "ok"
+	var exitCode *int
+	var errText string
+	if runErr != nil {
+		status = "failed"
+		errText = runErr.Error()
+	} else {
+		code := result.ExitCode
+		exitCode = &code
+		if code != 0 {
+			status = "failed"
+			errText = fmt.Sprintf("gate: exit %d", code)
+		}
+	}
+	if err := lg.Step(runlog.Event{
+		Step:     verb,
+		Status:   status,
+		Command:  command,
+		Host:     cfg.Server.Host,
+		User:     cfg.Server.User,
+		ExitCode: exitCode,
+		Error:    errText,
+		Stdout:   result.Stdout,
+		Stderr:   result.Stderr,
+	}); err != nil {
+		return err
+	}
+	if runErr != nil {
+		return fmt.Errorf("%s: %w", command, runErr)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("%s: gate exit %d", command, result.ExitCode)
+	}
+	return nil
 }
 
 // finishRun은 점검 단계를 이력에 남긴 뒤 알림을 보낸다.

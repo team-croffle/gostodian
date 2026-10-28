@@ -205,6 +205,93 @@ func TestRunCallsSSH(t *testing.T) {
 	}
 }
 
+func TestRunStopStartHistory(t *testing.T) {
+	restoreConnect(t)
+	silenceNotify(t)
+	var got []string
+	connect = func(config.Config) runner {
+		return stubRunner{
+			run: func() (ssh.Result, error) {
+				return ssh.Result{Stdout: "status-ok\n"}, nil
+			},
+			runVerb: func(verb, name string) (ssh.Result, error) {
+				got = append(got, verb+" "+name)
+				return ssh.Result{Stdout: verb + " " + name + "\n"}, nil
+			},
+		}
+	}
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	body := "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: secrets/id_ed25519\n  known_hosts_file: secrets/known_hosts\npipeline:\n  docker_order:\n    - svc-a\n    - svc-b\nvpn:\n  interface: \"\"\n"
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logDir := t.TempDir()
+	var stdout bytes.Buffer
+	if err := run([]string{"run", "--config", cfgPath, "--log-dir", logDir}, &stdout, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "stop svc-a,stop svc-b,start svc-b,start svc-a" {
+		t.Fatalf("got = %v", got)
+	}
+	history := readHistory(t, logDir)
+	if history.Status != "ok" || len(history.Steps) != 5 {
+		t.Fatalf("history = %+v", history)
+	}
+	want := []string{"status", "stop svc-a", "stop svc-b", "start svc-b", "start svc-a"}
+	for i, command := range want {
+		if history.Steps[i].Command != command || history.Steps[i].Status != "ok" {
+			t.Fatalf("step %d = %+v", i, history.Steps[i])
+		}
+	}
+	if !strings.Contains(stdout.String(), "stop svc-a") || !strings.Contains(stdout.String(), "start svc-a") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestRunStopsOnStopFailure(t *testing.T) {
+	restoreConnect(t)
+	silenceNotify(t)
+	var got []string
+	connect = func(config.Config) runner {
+		return stubRunner{
+			run: func() (ssh.Result, error) {
+				return ssh.Result{Stdout: "status-ok\n"}, nil
+			},
+			runVerb: func(verb, name string) (ssh.Result, error) {
+				got = append(got, verb+" "+name)
+				if verb == ssh.StopVerb && name == "svc-b" {
+					return ssh.Result{ExitCode: 1, Stderr: "fail\n"}, nil
+				}
+				return ssh.Result{Stdout: "ok\n"}, nil
+			},
+		}
+	}
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	body := "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: secrets/id_ed25519\n  known_hosts_file: secrets/known_hosts\npipeline:\n  docker_order:\n    - svc-a\n    - svc-b\nvpn:\n  interface: \"\"\n"
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logDir := t.TempDir()
+	err := run([]string{"run", "--config", cfgPath, "--log-dir", logDir}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "exit 1") {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Join(got, ",") != "stop svc-a,stop svc-b" {
+		t.Fatalf("got = %v", got)
+	}
+	history := readHistory(t, logDir)
+	if history.Status != "failed" || len(history.Steps) != 3 {
+		t.Fatalf("history = %+v", history)
+	}
+	if history.Steps[2].Command != "stop svc-b" || history.Steps[2].Status != "failed" {
+		t.Fatalf("last = %+v", history.Steps[2])
+	}
+}
+
 func TestRunRemoteExit(t *testing.T) {
 	restoreConnect(t)
 	connect = func(config.Config) runner {
@@ -657,7 +744,8 @@ func readSuffix(t *testing.T, dir, suffix string) []byte {
 }
 
 type stubRunner struct {
-	run func() (ssh.Result, error)
+	run     func() (ssh.Result, error)
+	runVerb func(verb, name string) (ssh.Result, error)
 }
 
 func (s stubRunner) Run() (ssh.Result, error) {
@@ -665,6 +753,16 @@ func (s stubRunner) Run() (ssh.Result, error) {
 		return ssh.Result{}, nil
 	}
 	return s.run()
+}
+
+func (s stubRunner) RunVerb(verb, name string) (ssh.Result, error) {
+	if s.runVerb != nil {
+		return s.runVerb(verb, name)
+	}
+	if verb == ssh.StatusCommand && name == "" && s.run != nil {
+		return s.run()
+	}
+	return ssh.Result{}, nil
 }
 
 func restoreConnect(t *testing.T) {
