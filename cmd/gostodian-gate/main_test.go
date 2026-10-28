@@ -98,7 +98,8 @@ func TestRunCheckRejectsStateChanges(t *testing.T) {
 }
 
 func TestHandleRejectsUnknownVerb(t *testing.T) {
-	assertRejected(t, "reboot", nil, "rejected: verb")
+	assertRejected(t, "dnf", nil, "rejected: verb")
+	assertRejected(t, "shutdown", nil, "rejected: verb")
 }
 
 func TestHandleRejectsUnknownName(t *testing.T) {
@@ -278,7 +279,7 @@ func TestHandleAllowsExactNameWithoutRunningIt(t *testing.T) {
 
 func TestExecuteWritesRejection(t *testing.T) {
 	var stderr bytes.Buffer
-	err := execute("reboot", io.Discard, &stderr, nil, func(name string) ([]byte, error) {
+	err := execute("dnf", io.Discard, &stderr, nil, func(name string) ([]byte, error) {
 		t.Fatalf("executed %s", name)
 		return nil, nil
 	})
@@ -288,6 +289,39 @@ func TestExecuteWritesRejection(t *testing.T) {
 	if !strings.Contains(stderr.String(), "rejected: verb") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
+}
+
+func TestHandleUpdateAndReboot(t *testing.T) {
+	prev := runService
+	t.Cleanup(func() { runService = prev })
+	var got []string
+	runService = func(verb, name string) ([]byte, error) {
+		got = append(got, verb)
+		if name != "" {
+			t.Fatalf("name = %q", name)
+		}
+		if verb == "update-status" {
+			return []byte("running\n"), nil
+		}
+		return []byte(verb + " ok\n"), nil
+	}
+	for _, command := range []string{"update", "update-status", "reboot"} {
+		text, err := handle(command, nil, func(string) ([]byte, error) {
+			t.Fatal("status check")
+			return nil, nil
+		})
+		if err != nil {
+			t.Fatalf("%q: %v", command, err)
+		}
+		if text == "" {
+			t.Fatalf("%q empty", command)
+		}
+	}
+	if strings.Join(got, ",") != "update,update-status,reboot" {
+		t.Fatalf("got = %v", got)
+	}
+	assertRejected(t, "update now", nil, "rejected: args")
+	assertRejected(t, "reboot please", nil, "rejected: args")
 }
 
 func stubBootID(t *testing.T, text string, err error) {

@@ -18,10 +18,14 @@ import (
 // StatusCommand는 게이트에 보내는 동사다. 경로나 셸 문자열로 조립하지 않는다.
 const StatusCommand = "status"
 
-// StopVerb·StartVerb는 게이트 동사다. 서비스 이름은 따로 붙인다.
+// 게이트 동사. stop·start만 서비스 이름을 붙인다.
 const (
-	StopVerb  = "stop"
-	StartVerb = "start"
+	StopVerb         = "stop"
+	StartVerb        = "start"
+	UpdateVerb       = "update"
+	UpdateStatusVerb = "update-status"
+	RebootVerb       = "reboot"
+	BootIDVerb       = "boot-id"
 )
 
 // 접속 실패 종류. 재시도 없이 바로 반환.
@@ -69,7 +73,7 @@ func (c *Client) Run() (Result, error) {
 }
 
 // RunVerb는 게이트 동사와 선택 이름을 보낸다. 이름은 공백 없이 그대로 한 토큰이다.
-// 셸로 조립하지 않는다. stop·start는 이름이 필요하고, status·boot-id는 이름이 없어야 한다.
+// 셸로 조립하지 않는다. stop·start는 이름이 필요하고, 그 밖의 동사는 이름이 없어야 한다.
 func (c *Client) RunVerb(verb, name string) (result Result, err error) {
 	command, err := gateCommand(verb, name)
 	if err != nil {
@@ -143,7 +147,7 @@ func gateCommand(verb, name string) (string, error) {
 	verb = strings.TrimSpace(verb)
 	name = strings.TrimSpace(name)
 	switch verb {
-	case StatusCommand, "boot-id":
+	case StatusCommand, BootIDVerb, UpdateVerb, UpdateStatusVerb, RebootVerb:
 		if name != "" {
 			return "", errors.New("gate command: unexpected name")
 		}

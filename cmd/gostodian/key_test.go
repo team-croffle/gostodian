@@ -113,7 +113,7 @@ func TestKeyInitRejectsLooseMode(t *testing.T) {
 func TestRunAuthFailureDoesNotReplaceKey(t *testing.T) {
 	restoreConnect(t)
 	connect = func(config.Config) runner {
-		return stubRunner{
+		return &stubRunner{
 			run: func() (ssh.Result, error) {
 				return ssh.Result{}, ssh.ErrAuthFailed
 			},

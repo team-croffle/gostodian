@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gostodian/internal/config"
 	"gostodian/internal/discord"
@@ -73,7 +74,7 @@ func TestExecIsUsageError(t *testing.T) {
 	called := false
 	connect = func(config.Config) runner {
 		called = true
-		return stubRunner{}
+		return &stubRunner{}
 	}
 
 	var stderr bytes.Buffer
@@ -94,7 +95,7 @@ func TestRunRejectsExtraArgs(t *testing.T) {
 	called := false
 	connect = func(config.Config) runner {
 		called = true
-		return stubRunner{}
+		return &stubRunner{}
 	}
 
 	var stderr bytes.Buffer
@@ -112,8 +113,9 @@ func TestRunRejectsExtraArgs(t *testing.T) {
 
 func TestRunDefaultLogDir(t *testing.T) {
 	restoreConnect(t)
+	restoreClock(t)
 	connect = func(config.Config) runner {
-		return stubRunner{
+		return &stubRunner{
 			run: func() (ssh.Result, error) {
 				return ssh.Result{Stdout: "ok\n"}, nil
 			},
@@ -167,11 +169,12 @@ func TestComposeHistoryVolume(t *testing.T) {
 
 func TestRunCallsSSH(t *testing.T) {
 	restoreConnect(t)
+	restoreClock(t)
 	silenceNotify(t)
 	var gotCfg config.Config
 	connect = func(cfg config.Config) runner {
 		gotCfg = cfg
-		return stubRunner{
+		return &stubRunner{
 			run: func() (ssh.Result, error) {
 				return ssh.Result{Stdout: "ok\n", Stderr: "warn\n"}, nil
 			},
@@ -187,18 +190,16 @@ func TestRunCallsSSH(t *testing.T) {
 	if gotCfg.Server.User != "gostodian" {
 		t.Fatalf("user = %q", gotCfg.Server.User)
 	}
-	if stdout.String() != "ok\n" || !strings.Contains(stderr.String(), "warn\n") {
+	if !strings.Contains(stdout.String(), "ok\n") || !strings.Contains(stderr.String(), "warn\n") {
 		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "execution_id:") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	history := readHistory(t, logDir)
-	if history.Status != "ok" || len(history.Steps) != 1 || history.Steps[0].Step != "run" || history.Steps[0].Command != ssh.StatusCommand || history.Steps[0].Stdout != "ok" {
+	// status + update + update-status + boot-id + reboot + reconnect boot-id
+	if history.Status != "ok" || len(history.Steps) != 6 || history.Steps[0].Command != ssh.StatusCommand || history.Steps[0].Stdout != "ok" {
 		t.Fatalf("history = %+v", history)
-	}
-	if history.Steps[0].Command != "status" {
-		t.Fatalf("command = %q", history.Steps[0].Command)
 	}
 	if strings.Contains(historyText(t, logDir), "id_ed25519") {
 		t.Fatal("identity path was written to the log")
@@ -207,16 +208,33 @@ func TestRunCallsSSH(t *testing.T) {
 
 func TestRunStopStartHistory(t *testing.T) {
 	restoreConnect(t)
+	restoreClock(t)
 	silenceNotify(t)
 	var got []string
+	boots := 0
 	connect = func(config.Config) runner {
-		return stubRunner{
+		return &stubRunner{
 			run: func() (ssh.Result, error) {
 				return ssh.Result{Stdout: "status-ok\n"}, nil
 			},
 			runVerb: func(verb, name string) (ssh.Result, error) {
-				got = append(got, verb+" "+name)
-				return ssh.Result{Stdout: verb + " " + name + "\n"}, nil
+				label := verb
+				if name != "" {
+					label += " " + name
+				}
+				got = append(got, label)
+				switch verb {
+				case ssh.UpdateStatusVerb:
+					return ssh.Result{Stdout: "done\n"}, nil
+				case ssh.BootIDVerb:
+					boots++
+					if boots == 1 {
+						return ssh.Result{Stdout: "boot-before\n"}, nil
+					}
+					return ssh.Result{Stdout: "boot-after\n"}, nil
+				default:
+					return ssh.Result{Stdout: label + "\n"}, nil
+				}
 			},
 		}
 	}
@@ -232,30 +250,123 @@ func TestRunStopStartHistory(t *testing.T) {
 	if err := run([]string{"run", "--config", cfgPath, "--log-dir", logDir}, &stdout, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(got, ",") != "stop svc-a,stop svc-b,start svc-b,start svc-a" {
+	wantGot := "stop svc-a,stop svc-b,update,update-status,boot-id,reboot,boot-id,start svc-b,start svc-a"
+	if strings.Join(got, ",") != wantGot {
 		t.Fatalf("got = %v", got)
 	}
 	history := readHistory(t, logDir)
-	if history.Status != "ok" || len(history.Steps) != 5 {
+	if history.Status != "ok" || len(history.Steps) != 10 {
 		t.Fatalf("history = %+v", history)
 	}
-	want := []string{"status", "stop svc-a", "stop svc-b", "start svc-b", "start svc-a"}
+	want := []string{"status", "stop svc-a", "stop svc-b", "update", "update-status", "boot-id", "reboot", "boot-id", "start svc-b", "start svc-a"}
 	for i, command := range want {
 		if history.Steps[i].Command != command || history.Steps[i].Status != "ok" {
 			t.Fatalf("step %d = %+v", i, history.Steps[i])
 		}
+	}
+	if history.Steps[7].Step != "reconnect" {
+		t.Fatalf("reconnect step = %+v", history.Steps[7])
 	}
 	if !strings.Contains(stdout.String(), "stop svc-a") || !strings.Contains(stdout.String(), "start svc-a") {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
 }
 
-func TestRunStopsOnStopFailure(t *testing.T) {
+func TestRunUpdateFailureStops(t *testing.T) {
 	restoreConnect(t)
+	restoreClock(t)
 	silenceNotify(t)
 	var got []string
 	connect = func(config.Config) runner {
-		return stubRunner{
+		return &stubRunner{
+			run: func() (ssh.Result, error) {
+				return ssh.Result{Stdout: "status-ok\n"}, nil
+			},
+			runVerb: func(verb, name string) (ssh.Result, error) {
+				got = append(got, verb)
+				switch verb {
+				case ssh.UpdateVerb:
+					return ssh.Result{Stdout: "started\n"}, nil
+				case ssh.UpdateStatusVerb:
+					return ssh.Result{Stdout: "failed\n"}, nil
+				default:
+					t.Fatalf("unexpected %s", verb)
+					return ssh.Result{}, nil
+				}
+			},
+		}
+	}
+	example := filepath.Join("..", "..", "config", "config.yaml.example")
+	logDir := t.TempDir()
+	err := run([]string{"run", "--config", example, "--log-dir", logDir}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "update-status: failed") {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Join(got, ",") != "update,update-status" {
+		t.Fatalf("got = %v", got)
+	}
+	history := readHistory(t, logDir)
+	if history.Status != "failed" {
+		t.Fatalf("history = %+v", history)
+	}
+	last := history.Steps[len(history.Steps)-1]
+	if last.Command != ssh.UpdateStatusVerb || last.Status != "failed" {
+		t.Fatalf("last = %+v", last)
+	}
+}
+
+func TestRunBootIDUnchangedFails(t *testing.T) {
+	restoreConnect(t)
+	restoreClock(t)
+	silenceNotify(t)
+	now := time.Unix(0, 0)
+	nowFunc = func() time.Time { return now }
+	sleepFunc = func(time.Duration) { now = now.Add(time.Minute) }
+	connect = func(config.Config) runner {
+		return &stubRunner{
+			run: func() (ssh.Result, error) {
+				return ssh.Result{Stdout: "status-ok\n"}, nil
+			},
+			runVerb: func(verb, name string) (ssh.Result, error) {
+				switch verb {
+				case ssh.UpdateStatusVerb:
+					return ssh.Result{Stdout: "done\n"}, nil
+				case ssh.BootIDVerb:
+					return ssh.Result{Stdout: "same-boot\n"}, nil
+				default:
+					return ssh.Result{}, nil
+				}
+			},
+		}
+	}
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	body := "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: secrets/id_ed25519\n  known_hosts_file: secrets/known_hosts\npipeline:\n  timeouts:\n    reboot: 2m\nvpn:\n  interface: \"\"\n"
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logDir := t.TempDir()
+	err := run([]string{"run", "--config", cfgPath, "--log-dir", logDir}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "boot_id unchanged") {
+		t.Fatalf("err = %v", err)
+	}
+	history := readHistory(t, logDir)
+	if history.Status != "failed" {
+		t.Fatalf("history = %+v", history)
+	}
+	last := history.Steps[len(history.Steps)-1]
+	if last.Step != "reconnect" || last.Error != "boot_id unchanged" {
+		t.Fatalf("last = %+v", last)
+	}
+}
+
+func TestRunStopsOnStopFailure(t *testing.T) {
+	restoreConnect(t)
+	restoreClock(t)
+	silenceNotify(t)
+	var got []string
+	connect = func(config.Config) runner {
+		return &stubRunner{
 			run: func() (ssh.Result, error) {
 				return ssh.Result{Stdout: "status-ok\n"}, nil
 			},
@@ -295,7 +406,7 @@ func TestRunStopsOnStopFailure(t *testing.T) {
 func TestRunRemoteExit(t *testing.T) {
 	restoreConnect(t)
 	connect = func(config.Config) runner {
-		return stubRunner{
+		return &stubRunner{
 			run: func() (ssh.Result, error) {
 				return ssh.Result{Stdout: "no\n", ExitCode: 1}, nil
 			},
@@ -317,7 +428,7 @@ func TestRunReturnsDialError(t *testing.T) {
 	restoreConnect(t)
 	silenceNotify(t)
 	connect = func(config.Config) runner {
-		return stubRunner{
+		return &stubRunner{
 			run: func() (ssh.Result, error) {
 				return ssh.Result{}, ssh.ErrAuthFailed
 			},
@@ -340,7 +451,7 @@ func TestRunHostKeyMismatchClass(t *testing.T) {
 	restoreConnect(t)
 	silenceNotify(t)
 	connect = func(config.Config) runner {
-		return stubRunner{
+		return &stubRunner{
 			run: func() (ssh.Result, error) {
 				return ssh.Result{}, ssh.ErrHostKeyMismatch
 			},
@@ -363,7 +474,7 @@ func TestRunHostUnreachableClass(t *testing.T) {
 	restoreConnect(t)
 	silenceNotify(t)
 	connect = func(config.Config) runner {
-		return stubRunner{
+		return &stubRunner{
 			run: func() (ssh.Result, error) {
 				return ssh.Result{}, ssh.ErrHostUnreachable
 			},
@@ -388,7 +499,7 @@ func TestRunVPNDownSkipsSSH(t *testing.T) {
 	called := false
 	connect = func(config.Config) runner {
 		called = true
-		return stubRunner{}
+		return &stubRunner{}
 	}
 	requireVPN = func(name string) error {
 		if name != "wg0" {
@@ -419,11 +530,12 @@ func TestRunVPNDownSkipsSSH(t *testing.T) {
 
 func TestRunEmptyVPNDials(t *testing.T) {
 	restoreConnect(t)
+	restoreClock(t)
 	restoreRequireVPN(t)
 	called := false
 	connect = func(config.Config) runner {
 		called = true
-		return stubRunner{
+		return &stubRunner{
 			run: func() (ssh.Result, error) {
 				return ssh.Result{Stdout: "ok\n"}, nil
 			},
@@ -448,7 +560,7 @@ func TestRunFailureLogOmitsPrivateKey(t *testing.T) {
 	restoreConnect(t)
 	const secret = "-----BEGIN OPENSSH PRIVATE KEY-----\nSECRETMATERIAL\n-----END OPENSSH PRIVATE KEY-----"
 	connect = func(config.Config) runner {
-		return stubRunner{
+		return &stubRunner{
 			run: func() (ssh.Result, error) {
 				return ssh.Result{Stderr: secret}, errors.New(secret)
 			},
@@ -476,8 +588,9 @@ func TestRunFailureLogOmitsPrivateKey(t *testing.T) {
 
 func TestRunDoesNotReadOtherSecrets(t *testing.T) {
 	restoreConnect(t)
+	restoreClock(t)
 	connect = func(config.Config) runner {
-		return stubRunner{
+		return &stubRunner{
 			run: func() (ssh.Result, error) {
 				return ssh.Result{Stdout: "ok\n"}, nil
 			},
@@ -512,11 +625,12 @@ func TestRunDoesNotReadOtherSecrets(t *testing.T) {
 
 func TestRunNotifiesStatus(t *testing.T) {
 	restoreConnect(t)
+	restoreClock(t)
 	restoreNotify(t)
 	var got []discord.Notice
 	notify = captureNotices(t, &got)
 	connect = func(config.Config) runner {
-		return stubRunner{
+		return &stubRunner{
 			run: func() (ssh.Result, error) {
 				return ssh.Result{Stdout: "hostname: raw-log\n", Stderr: "raw-stderr\n"}, nil
 			},
@@ -557,7 +671,7 @@ func TestRunNotifiesConnectClass(t *testing.T) {
 			var got []discord.Notice
 			notify = captureNotices(t, &got)
 			connect = func(config.Config) runner {
-				return stubRunner{
+				return &stubRunner{
 					run: func() (ssh.Result, error) {
 						return ssh.Result{Stdout: "raw-log\n"}, tc.err
 					},
@@ -586,7 +700,7 @@ func TestRunNotifiesVPNRequired(t *testing.T) {
 	called := false
 	connect = func(config.Config) runner {
 		called = true
-		return stubRunner{}
+		return &stubRunner{}
 	}
 	requireVPN = func(string) error { return vpn.ErrRequired }
 	var got []discord.Notice
@@ -619,7 +733,7 @@ func TestRunNotifiesGateFailure(t *testing.T) {
 	var got []discord.Notice
 	notify = captureNotices(t, &got)
 	connect = func(config.Config) runner {
-		return stubRunner{
+		return &stubRunner{
 			run: func() (ssh.Result, error) {
 				return ssh.Result{Stdout: "raw-log\n", ExitCode: 1}, nil
 			},
@@ -641,13 +755,14 @@ func TestRunNotifiesGateFailure(t *testing.T) {
 
 func TestRunNotifyFailureKeepsCheckResult(t *testing.T) {
 	restoreConnect(t)
+	restoreClock(t)
 	restoreNotify(t)
 	const token = "secret-token"
 	notify = func(string, discord.Notice) error {
 		return errors.New("https://discord.example/api/webhooks/" + token)
 	}
 	connect = func(config.Config) runner {
-		return stubRunner{
+		return &stubRunner{
 			run: func() (ssh.Result, error) {
 				return ssh.Result{Stdout: "ok\n"}, nil
 			},
@@ -676,6 +791,10 @@ func TestRunNotifyFailureKeepsCheckResult(t *testing.T) {
 			notifySeen++
 			if step.Status != "failed" || step.Error != "discord webhook: send failed" {
 				t.Fatalf("notify step = %+v", step)
+			}
+		case "update", "update-status", "boot-id", "reboot", "reconnect", "stop", "start":
+			if step.Status != "ok" {
+				t.Fatalf("maintenance step = %+v", step)
 			}
 		default:
 			t.Fatalf("step = %+v", step)
@@ -746,23 +865,45 @@ func readSuffix(t *testing.T, dir, suffix string) []byte {
 type stubRunner struct {
 	run     func() (ssh.Result, error)
 	runVerb func(verb, name string) (ssh.Result, error)
+	boots   int
 }
 
-func (s stubRunner) Run() (ssh.Result, error) {
+func (s *stubRunner) Run() (ssh.Result, error) {
 	if s.run == nil {
 		return ssh.Result{}, nil
 	}
 	return s.run()
 }
 
-func (s stubRunner) RunVerb(verb, name string) (ssh.Result, error) {
+func (s *stubRunner) RunVerb(verb, name string) (ssh.Result, error) {
 	if s.runVerb != nil {
 		return s.runVerb(verb, name)
 	}
 	if verb == ssh.StatusCommand && name == "" && s.run != nil {
 		return s.run()
 	}
-	return ssh.Result{}, nil
+	switch verb {
+	case ssh.UpdateStatusVerb:
+		return ssh.Result{Stdout: "done\n"}, nil
+	case ssh.BootIDVerb:
+		s.boots++
+		if s.boots == 1 {
+			return ssh.Result{Stdout: "boot-before\n"}, nil
+		}
+		return ssh.Result{Stdout: "boot-after\n"}, nil
+	default:
+		return ssh.Result{}, nil
+	}
+}
+
+func restoreClock(t *testing.T) {
+	t.Helper()
+	prevSleep, prevNow := sleepFunc, nowFunc
+	t.Cleanup(func() {
+		sleepFunc = prevSleep
+		nowFunc = prevNow
+	})
+	sleepFunc = func(time.Duration) {}
 }
 
 func restoreConnect(t *testing.T) {

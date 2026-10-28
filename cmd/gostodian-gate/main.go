@@ -26,18 +26,32 @@ var readBootID = func() ([]byte, error) {
 // update 헬퍼가 안에서 systemd-run으로 dnf를 돌리더라도, sudoers에는 이 경로만 올린다.
 const svcHelper = "/usr/local/libexec/gostodian-svc"
 
-// runService는 허용된 stop·start만 실행한다. 인자로만 넘기고 셸로 조립하지 않는다.
+// runService는 허용된 게이트 동사만 실행한다. 인자로만 넘기고 셸로 조립하지 않는다.
 // stop은 down으로 실행해, 재부팅 뒤에 서비스가 스스로 올라오지 않게 한다.
+// update-status는 읽기만 하므로 sudo 없이 헬퍼만 부른다.
 var runService = func(verb, name string) ([]byte, error) {
-	action, err := serviceAction(verb)
-	if err != nil {
-		return nil, err
+	switch verb {
+	case "update-status":
+		return exec.Command(svcHelper, "update-status").Output() //nolint:gosec // 고정 경로·고정 인자
+	case "update", "reboot":
+		argv, err := sudoArgv(verb, "")
+		if err != nil {
+			return nil, err
+		}
+		return exec.Command(argv[0], argv[1:]...).Output() //nolint:gosec // 인자는 sudoArgv가 고정한다.
+	case "stop", "start":
+		action, err := serviceAction(verb)
+		if err != nil {
+			return nil, err
+		}
+		argv, err := sudoArgv(action, name)
+		if err != nil {
+			return nil, err
+		}
+		return exec.Command(argv[0], argv[1:]...).Output() //nolint:gosec // 인자는 sudoArgv가 고정한다.
+	default:
+		return nil, errors.New("not allowed")
 	}
-	argv, err := sudoArgv(action, name)
-	if err != nil {
-		return nil, err
-	}
-	return exec.Command(argv[0], argv[1:]...).Output() //nolint:gosec // 인자는 sudoArgv가 고정한다.
 }
 
 // serviceAction은 게이트 동사를 헬퍼에 넘길 고정 동작으로 바꾼다.
@@ -121,6 +135,8 @@ func handle(command string, names map[string]struct{}, run func(string) ([]byte,
 		return bootID(readBootID)
 	case "stop", "start":
 		return applyService(verb, name, runService)
+	case "update", "update-status", "reboot":
+		return applyHost(verb, runService)
 	default:
 		return "", rejected("verb", command)
 	}
@@ -131,6 +147,15 @@ func applyService(verb, name string, run func(string, string) ([]byte, error)) (
 	out, err := run(verb, name)
 	if err != nil {
 		return "", fmt.Errorf("%s %s: %w", verb, name, err)
+	}
+	return string(out), nil
+}
+
+// applyHost는 이름 없는 호스트 동사(update, update-status, reboot)를 실행한다.
+func applyHost(verb string, run func(string, string) ([]byte, error)) (string, error) {
+	out, err := run(verb, "")
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", verb, err)
 	}
 	return string(out), nil
 }
@@ -167,6 +192,11 @@ func parseCommand(command string, names map[string]struct{}) (string, string, er
 			return "", "", rejected("name", command)
 		}
 		return verb, name, nil
+	case "update", "update-status", "reboot":
+		if len(fields) != 1 {
+			return "", "", rejected("args", command)
+		}
+		return verb, "", nil
 	case "stop", "start":
 		if len(fields) != 2 {
 			return "", "", rejected("name", command)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"gostodian/internal/config"
@@ -16,12 +17,23 @@ import (
 	"gostodian/internal/vpn"
 )
 
-const sshDialTimeout = 30 * time.Second
+const (
+	sshDialTimeout      = 30 * time.Second
+	defaultStepTimeout  = 10 * time.Minute
+	defaultRebootWait   = 15 * time.Minute
+	updatePollInterval  = 2 * time.Second
+	rebootInitialWait   = 1 * time.Second
+	rebootMaxWait       = 30 * time.Second
+)
 
 var (
 	version  = "dev"
 	commit   = "none"
 	errUsage = errors.New("usage")
+
+	// sleepFunc·nowFunc는 테스트가 갈아 끼운다.
+	sleepFunc = time.Sleep
+	nowFunc   = time.Now
 )
 
 // runner는 홈랩 게이트 동사를 실행한다. 운영 경로는 *ssh.Client다.
@@ -189,13 +201,13 @@ func runSub(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	if err := runStopStart(lg, cfg, client, stdout, stderr); err != nil {
+	if err := runMaintenance(lg, cfg, client, stdout, stderr); err != nil {
 		noteErr := deliver(lg, cfg, discord.Notice{
 			Kind:        discord.KindFailed,
 			ExecutionID: lg.ID(),
 			Host:        cfg.Server.Host,
 			User:        cfg.Server.User,
-			Command:     "stop/start",
+			Command:     "maintenance",
 			Status:      "failed",
 		})
 		finErr := lg.Finish("failed")
@@ -221,13 +233,19 @@ func writeResult(stdout, stderr io.Writer, result ssh.Result) error {
 	return nil
 }
 
-// runStopStart는 설정 목록 순서로 정지하고 역순으로 기동한다.
-// 서비스마다 결과를 확인한 뒤에만 다음으로 진행한다.
-func runStopStart(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr io.Writer) error {
+// runMaintenance는 정지 → update → reboot·재접속 → 역순 기동이다.
+// health는 3.8에서 붙인다. 중간 실패 시 다음 단계로 가지 않는다.
+func runMaintenance(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr io.Writer) error {
 	for _, name := range pipeline.StopOrder(cfg.Pipeline.DockerOrder) {
 		if err := runOneService(lg, cfg, client, ssh.StopVerb, name, stdout, stderr); err != nil {
 			return err
 		}
+	}
+	if err := runUpdate(lg, cfg, client, stdout, stderr); err != nil {
+		return err
+	}
+	if err := runReboot(lg, cfg, client, stdout, stderr); err != nil {
+		return err
 	}
 	for _, name := range pipeline.StartOrder(cfg.Pipeline.DockerOrder) {
 		if err := runOneService(lg, cfg, client, ssh.StartVerb, name, stdout, stderr); err != nil {
@@ -238,7 +256,224 @@ func runStopStart(lg *runlog.Log, cfg config.Config, client runner, stdout, stde
 }
 
 func runOneService(lg *runlog.Log, cfg config.Config, client runner, verb, name string, stdout, stderr io.Writer) error {
-	command := verb + " " + name
+	return runGateStep(lg, cfg, client, verb, name, verb+" "+name, stdout, stderr)
+}
+
+// runUpdate는 update를 시작한 뒤 update-status로 끝날 때까지 폴링한다.
+// 진행 상태는 이력에 남기고, failed면 그 단계에서 중단한다.
+func runUpdate(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr io.Writer) error {
+	if err := runGateStep(lg, cfg, client, ssh.UpdateVerb, "", ssh.UpdateVerb, stdout, stderr); err != nil {
+		return err
+	}
+	deadline := nowFunc().Add(timeoutOf(cfg, "step", defaultStepTimeout))
+	for {
+		result, runErr := client.RunVerb(ssh.UpdateStatusVerb, "")
+		if err := writeResult(stdout, stderr, result); err != nil {
+			return err
+		}
+		state, parseErr := parseUpdateStatus(result.Stdout)
+		status := "ok"
+		var exitCode *int
+		var errText string
+		if runErr != nil {
+			status = "failed"
+			errText = runErr.Error()
+		} else if result.ExitCode != 0 {
+			status = "failed"
+			code := result.ExitCode
+			exitCode = &code
+			errText = fmt.Sprintf("gate: exit %d", code)
+		} else if parseErr != nil {
+			status = "failed"
+			errText = parseErr.Error()
+		} else if state == "failed" {
+			status = "failed"
+			errText = "update-status: failed"
+		}
+		if err := lg.Step(runlog.Event{
+			Step:     ssh.UpdateStatusVerb,
+			Status:   status,
+			Command:  ssh.UpdateStatusVerb,
+			Host:     cfg.Server.Host,
+			User:     cfg.Server.User,
+			ExitCode: exitCode,
+			Error:    errText,
+			Stdout:   result.Stdout,
+			Stderr:   result.Stderr,
+		}); err != nil {
+			return err
+		}
+		if status == "failed" {
+			if runErr != nil {
+				return fmt.Errorf("%s: %w", ssh.UpdateStatusVerb, runErr)
+			}
+			if errText != "" {
+				return errors.New(errText)
+			}
+			return errors.New("update-status: failed")
+		}
+		if state == "done" {
+			return nil
+		}
+		if !nowFunc().Before(deadline) {
+			return errors.New("update-status: timeout")
+		}
+		sleepFunc(updatePollInterval)
+	}
+}
+
+// runReboot는 재부팅 전 boot_id를 저장하고, 지수 백오프로 재접속한 뒤 변경을 확인한다.
+// 그대로이거나 제한 시간 안에 돌아오지 않으면 실패다. 호출 쪽이 Discord로 알린다.
+func runReboot(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr io.Writer) error {
+	before, err := readBootID(lg, cfg, client, stdout, stderr)
+	if err != nil {
+		return err
+	}
+	// 재부팅은 연결이 끊길 수 있다. 출력을 남기고, 접속 단절은 기다림으로 이어간다.
+	result, runErr := client.RunVerb(ssh.RebootVerb, "")
+	_ = writeResult(stdout, stderr, result)
+	status := "ok"
+	var exitCode *int
+	var errText string
+	if runErr != nil && !errors.Is(runErr, ssh.ErrHostUnreachable) {
+		status = "failed"
+		errText = runErr.Error()
+	} else if runErr == nil {
+		code := result.ExitCode
+		exitCode = &code
+		if code != 0 {
+			status = "failed"
+			errText = fmt.Sprintf("gate: exit %d", code)
+		}
+	}
+	if err := lg.Step(runlog.Event{
+		Step:     ssh.RebootVerb,
+		Status:   status,
+		Command:  ssh.RebootVerb,
+		Host:     cfg.Server.Host,
+		User:     cfg.Server.User,
+		ExitCode: exitCode,
+		Error:    errText,
+		Stdout:   result.Stdout,
+		Stderr:   result.Stderr,
+	}); err != nil {
+		return err
+	}
+	if status == "failed" {
+		if runErr != nil {
+			return fmt.Errorf("%s: %w", ssh.RebootVerb, runErr)
+		}
+		return fmt.Errorf("%s: gate exit %d", ssh.RebootVerb, result.ExitCode)
+	}
+
+	deadline := nowFunc().Add(timeoutOf(cfg, "reboot", defaultRebootWait))
+	wait := rebootInitialWait
+	sawSame := false
+	for nowFunc().Before(deadline) {
+		sleepFunc(wait)
+		afterResult, afterErr := client.RunVerb(ssh.BootIDVerb, "")
+		if afterErr != nil || afterResult.ExitCode != 0 {
+			if wait < rebootMaxWait {
+				wait *= 2
+				if wait > rebootMaxWait {
+					wait = rebootMaxWait
+				}
+			}
+			continue
+		}
+		after := strings.TrimSpace(afterResult.Stdout)
+		_ = writeResult(stdout, stderr, afterResult)
+		if after == "" || strings.ContainsAny(after, " \t\n\r") {
+			continue
+		}
+		if after == before {
+			sawSame = true
+			if wait < rebootMaxWait {
+				wait *= 2
+				if wait > rebootMaxWait {
+					wait = rebootMaxWait
+				}
+			}
+			continue
+		}
+		return lg.Step(runlog.Event{
+			Step:    "reconnect",
+			Status:  "ok",
+			Command: ssh.BootIDVerb,
+			Host:    cfg.Server.Host,
+			User:    cfg.Server.User,
+			Stdout:  after + "\n",
+		})
+	}
+	if sawSame {
+		err := lg.Step(runlog.Event{
+			Step:    "reconnect",
+			Status:  "failed",
+			Command: ssh.BootIDVerb,
+			Host:    cfg.Server.Host,
+			User:    cfg.Server.User,
+			Error:   "boot_id unchanged",
+		})
+		return errors.Join(errors.New("boot_id unchanged"), err)
+	}
+	err = lg.Step(runlog.Event{
+		Step:    "reconnect",
+		Status:  "failed",
+		Command: ssh.BootIDVerb,
+		Host:    cfg.Server.Host,
+		User:    cfg.Server.User,
+		Error:   "reboot timeout",
+	})
+	return errors.Join(errors.New("reboot timeout"), err)
+}
+
+func readBootID(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr io.Writer) (string, error) {
+	result, runErr := client.RunVerb(ssh.BootIDVerb, "")
+	if err := writeResult(stdout, stderr, result); err != nil {
+		return "", err
+	}
+	status := "ok"
+	var exitCode *int
+	var errText string
+	if runErr != nil {
+		status = "failed"
+		errText = runErr.Error()
+	} else {
+		code := result.ExitCode
+		exitCode = &code
+		if code != 0 {
+			status = "failed"
+			errText = fmt.Sprintf("gate: exit %d", code)
+		}
+	}
+	id := strings.TrimSpace(result.Stdout)
+	if status == "ok" && (id == "" || strings.ContainsAny(id, " \t\n\r")) {
+		status = "failed"
+		errText = "boot-id: invalid"
+	}
+	if err := lg.Step(runlog.Event{
+		Step:     ssh.BootIDVerb,
+		Status:   status,
+		Command:  ssh.BootIDVerb,
+		Host:     cfg.Server.Host,
+		User:     cfg.Server.User,
+		ExitCode: exitCode,
+		Error:    errText,
+		Stdout:   result.Stdout,
+		Stderr:   result.Stderr,
+	}); err != nil {
+		return "", err
+	}
+	if status != "ok" {
+		if runErr != nil {
+			return "", fmt.Errorf("%s: %w", ssh.BootIDVerb, runErr)
+		}
+		return "", errors.New(errText)
+	}
+	return id, nil
+}
+
+func runGateStep(lg *runlog.Log, cfg config.Config, client runner, verb, name, command string, stdout, stderr io.Writer) error {
 	result, runErr := client.RunVerb(verb, name)
 	if err := writeResult(stdout, stderr, result); err != nil {
 		return err
@@ -277,6 +512,31 @@ func runOneService(lg *runlog.Log, cfg config.Config, client runner, verb, name 
 		return fmt.Errorf("%s: gate exit %d", command, result.ExitCode)
 	}
 	return nil
+}
+
+func parseUpdateStatus(stdout string) (string, error) {
+	fields := strings.Fields(strings.ToLower(stdout))
+	if len(fields) == 0 {
+		return "", errors.New("update-status: empty")
+	}
+	switch fields[0] {
+	case "running", "done", "failed":
+		return fields[0], nil
+	default:
+		return "", fmt.Errorf("update-status: unknown %q", fields[0])
+	}
+}
+
+func timeoutOf(cfg config.Config, key string, fallback time.Duration) time.Duration {
+	raw := strings.TrimSpace(cfg.Pipeline.Timeouts[key])
+	if raw == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return fallback
+	}
+	return d
 }
 
 // finishRun은 점검 단계를 이력에 남긴 뒤 알림을 보낸다.
