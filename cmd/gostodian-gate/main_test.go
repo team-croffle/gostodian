@@ -133,6 +133,75 @@ func TestServiceActionStopIsDown(t *testing.T) {
 	}
 }
 
+func TestSudoArgvMatchesSudoersSpec(t *testing.T) {
+	argv, err := sudoArgv("down", "svc-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"sudo", "-n", svcHelper, "down", "svc-a"}
+	if strings.Join(argv, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("argv = %#v", argv)
+	}
+	spec, err := sudoersSpec("down", "svc-a")
+	if err != nil || spec != svcHelper+" down svc-a" {
+		t.Fatalf("spec = %q %v", spec, err)
+	}
+	argv, err = sudoArgv("start", "svc-a")
+	if err != nil || strings.Join(argv, " ") != "sudo -n "+svcHelper+" start svc-a" {
+		t.Fatalf("start = %#v %v", argv, err)
+	}
+	argv, err = sudoArgv("update", "")
+	if err != nil || strings.Join(argv, " ") != "sudo -n "+svcHelper+" update" {
+		t.Fatalf("update = %#v %v", argv, err)
+	}
+	argv, err = sudoArgv("reboot", "")
+	if err != nil || strings.Join(argv, " ") != "sudo -n "+svcHelper+" reboot" {
+		t.Fatalf("reboot = %#v %v", argv, err)
+	}
+}
+
+func TestSudoArgvOmitsDockerDnfSystemdRun(t *testing.T) {
+	cases := []struct {
+		action string
+		name   string
+	}{
+		{"down", "svc-a"},
+		{"start", "svc-a"},
+		{"update", ""},
+		{"reboot", ""},
+	}
+	for _, tc := range cases {
+		argv, err := sudoArgv(tc.action, tc.name)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.action, err)
+		}
+		blob := strings.Join(argv, " ")
+		for _, bad := range []string{"docker", "dnf", "systemd-run"} {
+			if strings.Contains(blob, bad) {
+				t.Fatalf("%s argv includes %s: %q", tc.action, bad, blob)
+			}
+		}
+		if argv[2] != svcHelper {
+			t.Fatalf("%s helper = %q", tc.action, argv[2])
+		}
+	}
+}
+
+func TestSudoArgvRejectsBadName(t *testing.T) {
+	if _, err := sudoArgv("down", ""); err == nil {
+		t.Fatal("empty name")
+	}
+	if _, err := sudoArgv("down", "svc a"); err == nil {
+		t.Fatal("spaced name")
+	}
+	if _, err := sudoArgv("update", "svc-a"); err == nil {
+		t.Fatal("update with name")
+	}
+	if _, err := sudoArgv("docker", "svc-a"); err == nil {
+		t.Fatal("docker action")
+	}
+}
+
 func TestHandleStopStartRunsServiceAction(t *testing.T) {
 	names := map[string]struct{}{"redis": {}}
 	prev := runService

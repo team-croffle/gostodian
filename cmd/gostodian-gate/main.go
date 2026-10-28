@@ -21,15 +21,23 @@ var readBootID = func() ([]byte, error) {
 	return os.ReadFile(bootIDPath)
 }
 
+// svcHelper는 홈랩에서 sudoers에 등록하는 고정 헬퍼 경로다.
+// 게이트는 docker, dnf, systemd-run을 sudo로 직접 부르지 않는다.
+// update 헬퍼가 안에서 systemd-run으로 dnf를 돌리더라도, sudoers에는 이 경로만 올린다.
+const svcHelper = "/usr/local/libexec/gostodian-svc"
+
 // runService는 허용된 stop·start만 실행한다. 인자로만 넘기고 셸로 조립하지 않는다.
 // stop은 down으로 실행해, 재부팅 뒤에 서비스가 스스로 올라오지 않게 한다.
-// 홈랩의 고정 헬퍼 경로다. sudoers 등록은 3.5 운영 준비.
 var runService = func(verb, name string) ([]byte, error) {
 	action, err := serviceAction(verb)
 	if err != nil {
 		return nil, err
 	}
-	return exec.Command("sudo", "-n", "/usr/local/libexec/gostodian-svc", action, name).Output()
+	argv, err := sudoArgv(action, name)
+	if err != nil {
+		return nil, err
+	}
+	return exec.Command(argv[0], argv[1:]...).Output() //nolint:gosec // 인자는 sudoArgv가 고정한다.
 }
 
 // serviceAction은 게이트 동사를 헬퍼에 넘길 고정 동작으로 바꾼다.
@@ -43,6 +51,36 @@ func serviceAction(verb string) (string, error) {
 	default:
 		return "", errors.New("not allowed")
 	}
+}
+
+// sudoArgv는 sudoers에 올릴 한 줄과 같은 인자 목록을 만든다.
+// 서비스마다 down·start 한 줄, update·reboot는 이름 없이 한 줄이다다.
+// docker, dnf *, systemd-run은 이 목록에 없다.
+func sudoArgv(action, name string) ([]string, error) {
+	switch action {
+	case "down", "start":
+		if name == "" || strings.ContainsAny(name, " \t\n\r") {
+			return nil, errors.New("invalid name")
+		}
+		return []string{"sudo", "-n", svcHelper, action, name}, nil
+	case "update", "reboot":
+		if name != "" {
+			return nil, errors.New("unexpected name")
+		}
+		return []string{"sudo", "-n", svcHelper, action}, nil
+	default:
+		return nil, errors.New("not allowed")
+	}
+}
+
+// sudoersSpec은 sudoers NOPASSWD 뒤에 붙는 고정 명령 한 줄이다다.
+// 게이트가 실행하는 인자와 같다.
+func sudoersSpec(action, name string) (string, error) {
+	argv, err := sudoArgv(action, name)
+	if err != nil {
+		return "", err
+	}
+	return strings.Join(argv[2:], " "), nil
 }
 
 func main() {
