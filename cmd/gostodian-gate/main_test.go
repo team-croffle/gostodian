@@ -119,6 +119,20 @@ func TestHandleRejectsExtraArgs(t *testing.T) {
 	assertRejected(t, "start redis now", names, "rejected: args")
 }
 
+func TestServiceActionStopIsDown(t *testing.T) {
+	got, err := serviceAction("stop")
+	if err != nil || got != "down" {
+		t.Fatalf("stop = %q %v", got, err)
+	}
+	got, err = serviceAction("start")
+	if err != nil || got != "start" {
+		t.Fatalf("start = %q %v", got, err)
+	}
+	if _, err := serviceAction("status"); err == nil {
+		t.Fatal("status was allowed")
+	}
+}
+
 func TestHandleStopStartRunsServiceAction(t *testing.T) {
 	names := map[string]struct{}{"redis": {}}
 	prev := runService

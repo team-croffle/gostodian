@@ -22,13 +22,26 @@ var readBootID = func() ([]byte, error) {
 }
 
 // runService는 허용된 stop·start만 실행한다. 인자로만 넘기고 셸로 조립하지 않는다.
+// stop은 down으로 실행해, 재부팅 뒤에 서비스가 스스로 올라오지 않게 한다.
 // 홈랩의 고정 헬퍼 경로다. sudoers 등록은 3.5 운영 준비.
 var runService = func(verb, name string) ([]byte, error) {
+	action, err := serviceAction(verb)
+	if err != nil {
+		return nil, err
+	}
+	return exec.Command("sudo", "-n", "/usr/local/libexec/gostodian-svc", action, name).Output()
+}
+
+// serviceAction은 게이트 동사를 헬퍼에 넘길 고정 동작으로 바꾼다.
+// 재시작 정책을 홈랩에서 맞추는 일은 운영 준비다.
+func serviceAction(verb string) (string, error) {
 	switch verb {
-	case "stop", "start":
-		return exec.Command("sudo", "-n", "/usr/local/libexec/gostodian-svc", verb, name).Output()
+	case "stop":
+		return "down", nil
+	case "start":
+		return "start", nil
 	default:
-		return nil, errors.New("not allowed")
+		return "", errors.New("not allowed")
 	}
 }
 
