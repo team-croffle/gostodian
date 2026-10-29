@@ -324,6 +324,28 @@ func TestHandleUpdateAndReboot(t *testing.T) {
 	assertRejected(t, "reboot please", nil, "rejected: args")
 }
 
+func TestHandleHealth(t *testing.T) {
+	prev := runService
+	t.Cleanup(func() { runService = prev })
+	runService = func(verb, name string) ([]byte, error) {
+		if verb != "health" || name != "" {
+			t.Fatalf("verb=%q name=%q", verb, name)
+		}
+		return []byte("containers: up\nports: listening\n"), nil
+	}
+	text, err := handle("health", nil, func(string) ([]byte, error) {
+		t.Fatal("status check")
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "containers: up") || !strings.Contains(text, "ports: listening") {
+		t.Fatalf("text = %q", text)
+	}
+	assertRejected(t, "health redis", nil, "rejected: args")
+}
+
 func stubBootID(t *testing.T, text string, err error) {
 	t.Helper()
 	prev := readBootID

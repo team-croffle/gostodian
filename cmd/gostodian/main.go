@@ -233,8 +233,8 @@ func writeResult(stdout, stderr io.Writer, result ssh.Result) error {
 	return nil
 }
 
-// runMaintenance는 정지 → update → reboot·재접속 → 역순 기동이다.
-// health는 3.8에서 붙인다. 중간 실패 시 다음 단계로 가지 않는다.
+// runMaintenance는 정지 → update → reboot·재접속 → 역순 기동 → health다.
+// 중간 실패 시 다음 단계로 가지 않는다.
 func runMaintenance(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr io.Writer) error {
 	for _, name := range pipeline.StopOrder(cfg.Pipeline.DockerOrder) {
 		if err := runOneService(lg, cfg, client, ssh.StopVerb, name, stdout, stderr); err != nil {
@@ -252,7 +252,7 @@ func runMaintenance(lg *runlog.Log, cfg config.Config, client runner, stdout, st
 			return err
 		}
 	}
-	return nil
+	return runGateStep(lg, cfg, client, ssh.HealthVerb, "", ssh.HealthVerb, stdout, stderr)
 }
 
 func runOneService(lg *runlog.Log, cfg config.Config, client runner, verb, name string, stdout, stderr io.Writer) error {

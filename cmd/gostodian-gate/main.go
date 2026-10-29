@@ -28,11 +28,11 @@ const svcHelper = "/usr/local/libexec/gostodian-svc"
 
 // runService는 허용된 게이트 동사만 실행한다. 인자로만 넘기고 셸로 조립하지 않는다.
 // stop은 down으로 실행해, 재부팅 뒤에 서비스가 스스로 올라오지 않게 한다.
-// update-status는 읽기만 하므로 sudo 없이 헬퍼만 부른다.
+// update-status·health는 읽기만 하므로 sudo 없이 헬퍼만 부른다.
 var runService = func(verb, name string) ([]byte, error) {
 	switch verb {
-	case "update-status":
-		return exec.Command(svcHelper, "update-status").Output() //nolint:gosec // 고정 경로·고정 인자
+	case "update-status", "health":
+		return exec.Command(svcHelper, verb).Output() //nolint:gosec // 고정 경로·고정 인자
 	case "update", "reboot":
 		argv, err := sudoArgv(verb, "")
 		if err != nil {
@@ -135,7 +135,7 @@ func handle(command string, names map[string]struct{}, run func(string) ([]byte,
 		return bootID(readBootID)
 	case "stop", "start":
 		return applyService(verb, name, runService)
-	case "update", "update-status", "reboot":
+	case "update", "update-status", "reboot", "health":
 		return applyHost(verb, runService)
 	default:
 		return "", rejected("verb", command)
@@ -192,7 +192,7 @@ func parseCommand(command string, names map[string]struct{}) (string, string, er
 			return "", "", rejected("name", command)
 		}
 		return verb, name, nil
-	case "update", "update-status", "reboot":
+	case "update", "update-status", "reboot", "health":
 		if len(fields) != 1 {
 			return "", "", rejected("args", command)
 		}

@@ -197,9 +197,12 @@ func TestRunCallsSSH(t *testing.T) {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	history := readHistory(t, logDir)
-	// status + update + update-status + boot-id + reboot + reconnect boot-id
-	if history.Status != "ok" || len(history.Steps) != 6 || history.Steps[0].Command != ssh.StatusCommand || history.Steps[0].Stdout != "ok" {
+	// status + update + update-status + boot-id + reboot + reconnect + health
+	if history.Status != "ok" || len(history.Steps) != 7 || history.Steps[0].Command != ssh.StatusCommand || history.Steps[0].Stdout != "ok" {
 		t.Fatalf("history = %+v", history)
+	}
+	if history.Steps[6].Command != ssh.HealthVerb || history.Steps[6].Status != "ok" {
+		t.Fatalf("health = %+v", history.Steps[6])
 	}
 	if strings.Contains(historyText(t, logDir), "id_ed25519") {
 		t.Fatal("identity path was written to the log")
@@ -250,15 +253,15 @@ func TestRunStopStartHistory(t *testing.T) {
 	if err := run([]string{"run", "--config", cfgPath, "--log-dir", logDir}, &stdout, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	wantGot := "stop svc-a,stop svc-b,update,update-status,boot-id,reboot,boot-id,start svc-b,start svc-a"
+	wantGot := "stop svc-a,stop svc-b,update,update-status,boot-id,reboot,boot-id,start svc-b,start svc-a,health"
 	if strings.Join(got, ",") != wantGot {
 		t.Fatalf("got = %v", got)
 	}
 	history := readHistory(t, logDir)
-	if history.Status != "ok" || len(history.Steps) != 10 {
+	if history.Status != "ok" || len(history.Steps) != 11 {
 		t.Fatalf("history = %+v", history)
 	}
-	want := []string{"status", "stop svc-a", "stop svc-b", "update", "update-status", "boot-id", "reboot", "boot-id", "start svc-b", "start svc-a"}
+	want := []string{"status", "stop svc-a", "stop svc-b", "update", "update-status", "boot-id", "reboot", "boot-id", "start svc-b", "start svc-a", "health"}
 	for i, command := range want {
 		if history.Steps[i].Command != command || history.Steps[i].Status != "ok" {
 			t.Fatalf("step %d = %+v", i, history.Steps[i])
@@ -792,7 +795,7 @@ func TestRunNotifyFailureKeepsCheckResult(t *testing.T) {
 			if step.Status != "failed" || step.Error != "discord webhook: send failed" {
 				t.Fatalf("notify step = %+v", step)
 			}
-		case "update", "update-status", "boot-id", "reboot", "reconnect", "stop", "start":
+		case "update", "update-status", "boot-id", "reboot", "reconnect", "stop", "start", "health":
 			if step.Status != "ok" {
 				t.Fatalf("maintenance step = %+v", step)
 			}

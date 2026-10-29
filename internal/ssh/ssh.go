@@ -26,6 +26,7 @@ const (
 	UpdateStatusVerb = "update-status"
 	RebootVerb       = "reboot"
 	BootIDVerb       = "boot-id"
+	HealthVerb       = "health"
 )
 
 // 접속 실패 종류. 재시도 없이 바로 반환.
@@ -147,7 +148,7 @@ func gateCommand(verb, name string) (string, error) {
 	verb = strings.TrimSpace(verb)
 	name = strings.TrimSpace(name)
 	switch verb {
-	case StatusCommand, BootIDVerb, UpdateVerb, UpdateStatusVerb, RebootVerb:
+	case StatusCommand, BootIDVerb, UpdateVerb, UpdateStatusVerb, RebootVerb, HealthVerb:
 		if name != "" {
 			return "", errors.New("gate command: unexpected name")
 		}
