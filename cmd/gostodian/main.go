@@ -31,9 +31,10 @@ var (
 	commit   = "none"
 	errUsage = errors.New("usage")
 
-	// sleepFunc·nowFunc는 테스트가 갈아 끼운다.
+	// sleepFunc·nowFunc·afterFunc는 테스트가 갈아 끼운다.
 	sleepFunc = time.Sleep
 	nowFunc   = time.Now
+	afterFunc = time.After
 )
 
 // runner는 홈랩 게이트 동사를 실행한다. 운영 경로는 *ssh.Client다.
@@ -234,7 +235,8 @@ func writeResult(stdout, stderr io.Writer, result ssh.Result) error {
 }
 
 // runMaintenance는 정지 → update → reboot·재접속 → 역순 기동 → health다.
-// 중간 실패 시 다음 단계로 가지 않는다.
+// 각 게이트 호출에는 timeouts.step을 쓰고, 중간 실패 시 다음 단계·자동 롤백 없이 반환한다.
+// Discord 알림은 호출 쪽이 보낸다.
 func runMaintenance(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr io.Writer) error {
 	for _, name := range pipeline.StopOrder(cfg.Pipeline.DockerOrder) {
 		if err := runOneService(lg, cfg, client, ssh.StopVerb, name, stdout, stderr); err != nil {
@@ -267,7 +269,7 @@ func runUpdate(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr 
 	}
 	deadline := nowFunc().Add(timeoutOf(cfg, "step", defaultStepTimeout))
 	for {
-		result, runErr := client.RunVerb(ssh.UpdateStatusVerb, "")
+		result, runErr := runVerbTimed(cfg, client, ssh.UpdateStatusVerb, "")
 		if err := writeResult(stdout, stderr, result); err != nil {
 			return err
 		}
@@ -330,7 +332,7 @@ func runReboot(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr 
 		return err
 	}
 	// 재부팅은 연결이 끊길 수 있다. 출력을 남기고, 접속 단절은 기다림으로 이어간다.
-	result, runErr := client.RunVerb(ssh.RebootVerb, "")
+	result, runErr := runVerbTimed(cfg, client, ssh.RebootVerb, "")
 	_ = writeResult(stdout, stderr, result)
 	status := "ok"
 	var exitCode *int
@@ -428,7 +430,7 @@ func runReboot(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr 
 }
 
 func readBootID(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr io.Writer) (string, error) {
-	result, runErr := client.RunVerb(ssh.BootIDVerb, "")
+	result, runErr := runVerbTimed(cfg, client, ssh.BootIDVerb, "")
 	if err := writeResult(stdout, stderr, result); err != nil {
 		return "", err
 	}
@@ -474,7 +476,7 @@ func readBootID(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr
 }
 
 func runGateStep(lg *runlog.Log, cfg config.Config, client runner, verb, name, command string, stdout, stderr io.Writer) error {
-	result, runErr := client.RunVerb(verb, name)
+	result, runErr := runVerbTimed(cfg, client, verb, name)
 	if err := writeResult(stdout, stderr, result); err != nil {
 		return err
 	}
@@ -512,6 +514,29 @@ func runGateStep(lg *runlog.Log, cfg config.Config, client runner, verb, name, c
 		return fmt.Errorf("%s: gate exit %d", command, result.ExitCode)
 	}
 	return nil
+}
+
+// runVerbTimed는 timeouts.step 안에 게이트 동사 하나를 끝낸다.
+// 재접속 폴링처럼 짧은 실패를 반복하는 구간은 직접 RunVerb를 쓴다.
+func runVerbTimed(cfg config.Config, client runner, verb, name string) (ssh.Result, error) {
+	type outcome struct {
+		result ssh.Result
+		err    error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		result, err := client.RunVerb(verb, name)
+		ch <- outcome{result: result, err: err}
+	}()
+	select {
+	case out := <-ch:
+		return out.result, out.err
+	case <-afterFunc(timeoutOf(cfg, "step", defaultStepTimeout)):
+		if name != "" {
+			return ssh.Result{}, fmt.Errorf("%s %s: timeout", verb, name)
+		}
+		return ssh.Result{}, fmt.Errorf("%s: timeout", verb)
+	}
 }
 
 func parseUpdateStatus(stdout string) (string, error) {

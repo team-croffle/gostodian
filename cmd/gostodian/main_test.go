@@ -275,6 +275,102 @@ func TestRunStopStartHistory(t *testing.T) {
 	}
 }
 
+func TestRunStartFailureSkipsHealth(t *testing.T) {
+	restoreConnect(t)
+	restoreClock(t)
+	silenceNotify(t)
+	var got []string
+	boots := 0
+	connect = func(config.Config) runner {
+		return &stubRunner{
+			run: func() (ssh.Result, error) {
+				return ssh.Result{Stdout: "status-ok\n"}, nil
+			},
+			runVerb: func(verb, name string) (ssh.Result, error) {
+				label := verb
+				if name != "" {
+					label += " " + name
+				}
+				got = append(got, label)
+				switch verb {
+				case ssh.UpdateStatusVerb:
+					return ssh.Result{Stdout: "done\n"}, nil
+				case ssh.BootIDVerb:
+					boots++
+					if boots == 1 {
+						return ssh.Result{Stdout: "boot-before\n"}, nil
+					}
+					return ssh.Result{Stdout: "boot-after\n"}, nil
+				case ssh.StartVerb:
+					return ssh.Result{ExitCode: 1, Stderr: "start fail\n"}, nil
+				default:
+					return ssh.Result{Stdout: "ok\n"}, nil
+				}
+			},
+		}
+	}
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	body := "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: secrets/id_ed25519\n  known_hosts_file: secrets/known_hosts\npipeline:\n  docker_order:\n    - svc-a\nvpn:\n  interface: \"\"\n"
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := run([]string{"run", "--config", cfgPath, "--log-dir", t.TempDir()}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "start svc-a") {
+		t.Fatalf("err = %v", err)
+	}
+	joined := strings.Join(got, ",")
+	if !strings.Contains(joined, "start svc-a") || strings.Contains(joined, "health") {
+		t.Fatalf("got = %v", got)
+	}
+}
+
+func TestRunStepTimeout(t *testing.T) {
+	restoreConnect(t)
+	restoreClock(t)
+	silenceNotify(t)
+	block := make(chan struct{})
+	t.Cleanup(func() { close(block) })
+	afterFunc = func(time.Duration) <-chan time.Time {
+		ch := make(chan time.Time, 1)
+		ch <- nowFunc()
+		return ch
+	}
+	connect = func(config.Config) runner {
+		return &stubRunner{
+			run: func() (ssh.Result, error) {
+				return ssh.Result{Stdout: "status-ok\n"}, nil
+			},
+			runVerb: func(verb, name string) (ssh.Result, error) {
+				if verb == ssh.UpdateVerb {
+					<-block
+					return ssh.Result{}, nil
+				}
+				return ssh.Result{Stdout: "done\n"}, nil
+			},
+		}
+	}
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	body := "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: secrets/id_ed25519\n  known_hosts_file: secrets/known_hosts\npipeline:\n  timeouts:\n    step: 1ms\nvpn:\n  interface: \"\"\n"
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logDir := t.TempDir()
+	err := run([]string{"run", "--config", cfgPath, "--log-dir", logDir}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "update: timeout") {
+		t.Fatalf("err = %v", err)
+	}
+	history := readHistory(t, logDir)
+	if history.Status != "failed" {
+		t.Fatalf("history = %+v", history)
+	}
+	last := history.Steps[len(history.Steps)-1]
+	if last.Command != ssh.UpdateVerb || last.Status != "failed" || !strings.Contains(last.Error, "timeout") {
+		t.Fatalf("last = %+v", last)
+	}
+}
+
 func TestRunUpdateFailureStops(t *testing.T) {
 	restoreConnect(t)
 	restoreClock(t)
@@ -901,10 +997,11 @@ func (s *stubRunner) RunVerb(verb, name string) (ssh.Result, error) {
 
 func restoreClock(t *testing.T) {
 	t.Helper()
-	prevSleep, prevNow := sleepFunc, nowFunc
+	prevSleep, prevNow, prevAfter := sleepFunc, nowFunc, afterFunc
 	t.Cleanup(func() {
 		sleepFunc = prevSleep
 		nowFunc = prevNow
+		afterFunc = prevAfter
 	})
 	sleepFunc = func(time.Duration) {}
 }
