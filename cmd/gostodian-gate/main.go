@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -30,15 +31,18 @@ const svcHelper = "/usr/local/libexec/gostodian-svc"
 // stop은 down으로 실행해, 재부팅 뒤에 서비스가 스스로 올라오지 않게 한다.
 // update-status·health는 읽기만 하므로 sudo 없이 헬퍼만 부른다.
 var runService = func(verb, name string) ([]byte, error) {
+	ctx := context.Background()
 	switch verb {
 	case "update-status", "health":
-		return exec.Command(svcHelper, verb).Output() //nolint:gosec // 고정 경로·고정 인자
+		// #nosec G204 -- fixed helper path and allowlisted verb only
+		return exec.CommandContext(ctx, svcHelper, verb).Output()
 	case "update", "reboot":
 		argv, err := sudoArgv(verb, "")
 		if err != nil {
 			return nil, err
 		}
-		return exec.Command(argv[0], argv[1:]...).Output() //nolint:gosec // 인자는 sudoArgv가 고정한다.
+		// #nosec G204 -- argv is a fixed sudoers-matching list from sudoArgv
+		return exec.CommandContext(ctx, argv[0], argv[1:]...).Output()
 	case "stop", "start":
 		action, err := serviceAction(verb)
 		if err != nil {
@@ -48,7 +52,8 @@ var runService = func(verb, name string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		return exec.Command(argv[0], argv[1:]...).Output() //nolint:gosec // 인자는 sudoArgv가 고정한다.
+		// #nosec G204 -- argv is a fixed sudoers-matching list from sudoArgv
+		return exec.CommandContext(ctx, argv[0], argv[1:]...).Output()
 	default:
 		return nil, errors.New("not allowed")
 	}
@@ -99,7 +104,9 @@ func sudoersSpec(action, name string) (string, error) {
 
 func main() {
 	// 프로세스 인자는 쓰지 않는다. 입력은 SSH_ORIGINAL_COMMAND 하나다.
-	if err := execute(os.Getenv("SSH_ORIGINAL_COMMAND"), os.Stdout, os.Stderr, allowedNames, runCheck); err != nil {
+	//nolint:forbidigo // SSH forced-command 전달 경로. 시크릿이 아니라 게이트 명령 문자열이다.
+	command := os.Getenv("SSH_ORIGINAL_COMMAND")
+	if err := execute(command, os.Stdout, os.Stderr, allowedNames, runCheck); err != nil {
 		os.Exit(1)
 	}
 }
@@ -229,13 +236,14 @@ func inspect(run func(string) ([]byte, error)) (string, error) {
 }
 
 func runCheck(name string) ([]byte, error) {
+	ctx := context.Background()
 	switch name {
 	case "hostname":
-		return exec.Command("hostname").Output()
+		return exec.CommandContext(ctx, "hostname").Output()
 	case "uptime":
-		return exec.Command("uptime").Output()
+		return exec.CommandContext(ctx, "uptime").Output()
 	case "whoami":
-		return exec.Command("whoami").Output()
+		return exec.CommandContext(ctx, "whoami").Output()
 	default:
 		return nil, errors.New("not allowed")
 	}

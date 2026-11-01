@@ -63,7 +63,7 @@ func Open(dir string) (*Log, error) {
 		return nil, err
 	}
 	path := filepath.Join(dir, id+".jsonl")
-	//nolint:gosec // 운영자가 지정한 로그 디렉터리 안의 새 파일
+	// #nosec G304 -- path is under an operator-configured log directory
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("create log %s: %w", path, err)

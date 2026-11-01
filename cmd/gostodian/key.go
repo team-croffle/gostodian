@@ -13,6 +13,7 @@ import (
 	"runtime"
 
 	gossh "golang.org/x/crypto/ssh"
+
 	"gostodian/internal/config"
 )
 
@@ -52,6 +53,7 @@ func runKey(args []string, stdout, stderr io.Writer) error {
 // 파일이 없으면 ed25519 개인키를 만들고, 있으면 그 파일을 유지한다.
 // 개인키 본문은 표준 출력에 쓰지 않는다.
 func initIdentity(path string, stdout io.Writer) error {
+	// #nosec G304 -- path comes from operator SSH identity_file config
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -84,9 +86,10 @@ func createIdentity(path string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+	if mkdirErr := os.MkdirAll(filepath.Dir(path), 0o700); mkdirErr != nil {
+		return mkdirErr
 	}
+	// #nosec G304 -- path comes from operator SSH identity_file config
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
@@ -94,7 +97,9 @@ func createIdentity(path string, stdout io.Writer) error {
 	writeErr := pem.Encode(f, block)
 	closeErr := f.Close()
 	if writeErr != nil {
-		_ = os.Remove(path)
+		if remErr := os.Remove(path); remErr != nil {
+			return errors.Join(writeErr, remErr)
+		}
 		return writeErr
 	}
 	if closeErr != nil {
@@ -105,7 +110,7 @@ func createIdentity(path string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if _, err := stdout.Write(gossh.MarshalAuthorizedKey(signer.PublicKey())); err != nil {
+	if _, err = stdout.Write(gossh.MarshalAuthorizedKey(signer.PublicKey())); err != nil {
 		return err
 	}
 	_, err = fmt.Fprintln(stdout, gossh.FingerprintSHA256(signer.PublicKey()))
