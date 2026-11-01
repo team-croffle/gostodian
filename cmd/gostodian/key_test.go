@@ -44,7 +44,7 @@ func TestKeyInitKeepsExistingKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout bytes.Buffer
-	if err := run([]string{"key", "init", "--config", cfgPath}, &stdout, ioDiscard()); err != nil {
+	if err = run([]string{"key", "init", "--config", cfgPath}, &stdout, ioDiscard()); err != nil {
 		t.Fatal(err)
 	}
 	after, err := os.ReadFile(keyPath)
@@ -94,7 +94,7 @@ func TestKeyInitRejectsLooseMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(keyPath, 0o644); err != nil {
+	if err = os.Chmod(keyPath, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	err = run([]string{"key", "init", "--config", cfgPath}, ioDiscard(), ioDiscard())

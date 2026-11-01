@@ -18,14 +18,14 @@ func TestOpenRecordsStepAndHistory(t *testing.T) {
 		t.Fatal("empty execution id")
 	}
 
-	if err := lg.Append(Event{Step: "exec", Status: "running", Command: "uptime"}); err != nil {
+	if err = lg.Append(Event{Step: "exec", Status: "running", Command: "uptime"}); err != nil {
 		t.Fatal(err)
 	}
 	code := 0
-	if err := lg.Step(Event{Step: "exec", Status: "ok", Command: "uptime", ExitCode: &code}); err != nil {
+	if err = lg.Step(Event{Step: "exec", Status: "ok", Command: "uptime", ExitCode: &code}); err != nil {
 		t.Fatal(err)
 	}
-	if err := lg.Finish("ok"); err != nil {
+	if err = lg.Finish("ok"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -38,7 +38,7 @@ func TestOpenRecordsStepAndHistory(t *testing.T) {
 		t.Fatalf("lines = %d\n%s", len(lines), jsonl)
 	}
 	var first Event
-	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
+	if err = json.Unmarshal([]byte(lines[0]), &first); err != nil {
 		t.Fatal(err)
 	}
 	if first.ExecutionID != lg.ID() || first.Status != "running" || first.Command != "uptime" {
@@ -68,7 +68,7 @@ func TestFailureClassAndSecretScrub(t *testing.T) {
 		t.Fatal(err)
 	}
 	secret := "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----"
-	if err := lg.Step(Event{
+	if err = lg.Step(Event{
 		Step:   "exec",
 		Status: "failed",
 		Error:  "auth_failed: " + secret,
@@ -78,7 +78,7 @@ func TestFailureClassAndSecretScrub(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := lg.Finish("failed"); err != nil {
+	if err = lg.Finish("failed"); err != nil {
 		t.Fatal(err)
 	}
 

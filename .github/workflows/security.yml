@@ -35,8 +35,11 @@ jobs:
           go run golang.org/x/vuln/cmd/govulncheck@latest \
             -format sarif ./... > govulncheck.sarif || true
 
+      # govulncheck SARIF can contain duplicate stack entries that upload-sarif rejects.
+      # Keep upload best-effort; the gate step below is the real failure condition.
       - uses: github/codeql-action/upload-sarif@v3
         if: always()
+        continue-on-error: true
         with:
           sarif_file: govulncheck.sarif
           category: govulncheck

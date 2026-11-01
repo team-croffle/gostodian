@@ -128,7 +128,7 @@ func TestRunDefaultLogDir(t *testing.T) {
 	}
 	dir := t.TempDir()
 	t.Chdir(dir)
-	if err := run([]string{"run", "--config", example}, io.Discard, io.Discard); err != nil {
+	if err = run([]string{"run", "--config", example}, io.Discard, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := os.ReadDir(filepath.Join(dir, "logs"))

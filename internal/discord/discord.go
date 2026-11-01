@@ -117,7 +117,7 @@ func Send(webhookURL string, n Notice) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 	defer cancel()
-	//nolint:gosec // 운영자가 지정한 웹훅 파일의 https 주소. 점검 출력으로 만들지 않는다.
+	// #nosec G107 -- webhook URL comes from an operator-managed secret file
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(payload))
 	if err != nil {
 		return errSend
@@ -128,8 +128,8 @@ func Send(webhookURL string, n Notice) error {
 	if err != nil {
 		return errSend
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if _, err := io.Copy(io.Discard, io.LimitReader(resp.Body, 1024)); err != nil {
+	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // body drained below or caller is done
+	if _, copyErr := io.Copy(io.Discard, io.LimitReader(resp.Body, 1024)); copyErr != nil {
 		return errSend
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

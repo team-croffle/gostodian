@@ -18,12 +18,12 @@ import (
 )
 
 const (
-	sshDialTimeout      = 30 * time.Second
-	defaultStepTimeout  = 10 * time.Minute
-	defaultRebootWait   = 15 * time.Minute
-	updatePollInterval  = 2 * time.Second
-	rebootInitialWait   = 1 * time.Second
-	rebootMaxWait       = 30 * time.Second
+	sshDialTimeout     = 30 * time.Second
+	defaultStepTimeout = 10 * time.Minute
+	defaultRebootWait  = 15 * time.Minute
+	updatePollInterval = 2 * time.Second
+	rebootInitialWait  = 1 * time.Second
+	rebootMaxWait      = 30 * time.Second
 )
 
 var (
@@ -161,7 +161,7 @@ func runSub(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = lg.Close() }()
+	defer func() { _ = lg.Close() }() //nolint:errcheck // history already flushed; close is best-effort
 
 	if err := lg.Append(runlog.Event{
 		Step:    "run",
@@ -277,18 +277,19 @@ func runUpdate(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr 
 		status := "ok"
 		var exitCode *int
 		var errText string
-		if runErr != nil {
+		switch {
+		case runErr != nil:
 			status = "failed"
 			errText = runErr.Error()
-		} else if result.ExitCode != 0 {
+		case result.ExitCode != 0:
 			status = "failed"
 			code := result.ExitCode
 			exitCode = &code
 			errText = fmt.Sprintf("gate: exit %d", code)
-		} else if parseErr != nil {
+		case parseErr != nil:
 			status = "failed"
 			errText = parseErr.Error()
-		} else if state == "failed" {
+		case state == "failed":
 			status = "failed"
 			errText = "update-status: failed"
 		}
@@ -333,7 +334,7 @@ func runReboot(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr 
 	}
 	// 재부팅은 연결이 끊길 수 있다. 출력을 남기고, 접속 단절은 기다림으로 이어간다.
 	result, runErr := runVerbTimed(cfg, client, ssh.RebootVerb, "")
-	_ = writeResult(stdout, stderr, result)
+	_ = writeResult(stdout, stderr, result) //nolint:errcheck // reboot may drop the session
 	status := "ok"
 	var exitCode *int
 	var errText string
@@ -348,7 +349,7 @@ func runReboot(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr 
 			errText = fmt.Sprintf("gate: exit %d", code)
 		}
 	}
-	if err := lg.Step(runlog.Event{
+	if stepErr := lg.Step(runlog.Event{
 		Step:     ssh.RebootVerb,
 		Status:   status,
 		Command:  ssh.RebootVerb,
@@ -358,8 +359,8 @@ func runReboot(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr 
 		Error:    errText,
 		Stdout:   result.Stdout,
 		Stderr:   result.Stderr,
-	}); err != nil {
-		return err
+	}); stepErr != nil {
+		return stepErr
 	}
 	if status == "failed" {
 		if runErr != nil {
@@ -384,7 +385,7 @@ func runReboot(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr 
 			continue
 		}
 		after := strings.TrimSpace(afterResult.Stdout)
-		_ = writeResult(stdout, stderr, afterResult)
+		_ = writeResult(stdout, stderr, afterResult) //nolint:errcheck // ignore write errors while probing boot_id
 		if after == "" || strings.ContainsAny(after, " \t\n\r") {
 			continue
 		}
@@ -408,7 +409,7 @@ func runReboot(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr 
 		})
 	}
 	if sawSame {
-		err := lg.Step(runlog.Event{
+		stepErr := lg.Step(runlog.Event{
 			Step:    "reconnect",
 			Status:  "failed",
 			Command: ssh.BootIDVerb,
@@ -416,7 +417,7 @@ func runReboot(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr 
 			User:    cfg.Server.User,
 			Error:   "boot_id unchanged",
 		})
-		return errors.Join(errors.New("boot_id unchanged"), err)
+		return errors.Join(errors.New("boot_id unchanged"), stepErr)
 	}
 	err = lg.Step(runlog.Event{
 		Step:    "reconnect",
