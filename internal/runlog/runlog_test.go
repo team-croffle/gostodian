@@ -99,6 +99,34 @@ func TestFailureClassAndSecretScrub(t *testing.T) {
 	}
 }
 
+func TestWriteCollectUsesExecutionID(t *testing.T) {
+	dir := t.TempDir()
+	lg, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----"
+	if err = lg.WriteCollect("secure", "line\n"+secret); err != nil {
+		t.Fatal(err)
+	}
+	if err = lg.WriteCollect("..", "nope"); err == nil {
+		t.Fatal("parent name was accepted")
+	}
+	if err = lg.WriteCollect("a/b", "nope"); err == nil {
+		t.Fatal("path name was accepted")
+	}
+	if err = lg.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "collects", lg.ID(), "secure"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "[redacted]" {
+		t.Fatalf("body = %q", data)
+	}
+}
+
 func TestOpenEmptyDir(t *testing.T) {
 	if _, err := Open("  "); err == nil {
 		t.Fatal("expected error")

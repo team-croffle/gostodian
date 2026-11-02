@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"gostodian/internal/collect"
 	"gostodian/internal/config"
 	"gostodian/internal/discord"
 	"gostodian/internal/pipeline"
@@ -234,8 +235,9 @@ func writeResult(stdout, stderr io.Writer, result ssh.Result) error {
 	return nil
 }
 
-// runMaintenance는 정지 → update → reboot·재접속 → 역순 기동 → health다.
-// 각 게이트 호출에는 timeouts.step을 쓰고, 중간 실패 시 다음 단계·자동 롤백 없이 반환한다.
+// runMaintenance는 정지 → update → reboot·재접속 → 수집 → 역순 기동 → health다.
+// 각 게이트 호출에는 timeouts.step을 쓰고, 수집이 아닌 단계가 실패하면 다음 단계·자동 롤백 없이 반환한다.
+// 수집 한 건이 실패해도 나머지 수집과 이후 기동은 이어가고, 끝난 뒤에 그 실패를 반환한다.
 // Discord 알림은 호출 쪽이 보낸다.
 func runMaintenance(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr io.Writer) error {
 	for _, name := range pipeline.StopOrder(cfg.Pipeline.DockerOrder) {
@@ -249,22 +251,66 @@ func runMaintenance(lg *runlog.Log, cfg config.Config, client runner, stdout, st
 	if err := runReboot(lg, cfg, client, stdout, stderr); err != nil {
 		return err
 	}
+	collectErr := runCollect(lg, cfg, client, stdout, stderr)
 	for _, name := range pipeline.StartOrder(cfg.Pipeline.DockerOrder) {
 		if err := runOneService(lg, cfg, client, ssh.StartVerb, name, stdout, stderr); err != nil {
-			return err
+			return errors.Join(collectErr, err)
 		}
 	}
-	return runGateStep(lg, cfg, client, ssh.HealthVerb, "", ssh.HealthVerb, stdout, stderr)
+	if _, err := runGateStep(lg, cfg, client, ssh.HealthVerb, "", ssh.HealthVerb, stdout, stderr); err != nil {
+		return errors.Join(collectErr, err)
+	}
+	return collectErr
+}
+
+// runCollect는 재부팅·재접속 뒤, 서비스 기동 전에 로그 네 종류와 리소스를 모은다.
+// 한 건이 실패해도 다음 수집은 계속하고, 실패는 모아서 반환한다.
+func runCollect(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr io.Writer) error {
+	var joined error
+	for _, kind := range collect.LogKinds() {
+		if err := runCollectOne(lg, cfg, client, collect.LogsVerb, kind, kind, stdout, stderr); err != nil {
+			joined = errors.Join(joined, err)
+		}
+	}
+	if err := runCollectOne(lg, cfg, client, collect.ResourcesVerb, "", collect.ResourcesVerb, stdout, stderr); err != nil {
+		joined = errors.Join(joined, err)
+	}
+	return joined
+}
+
+// runCollectOne은 게이트 동사 하나를 이력에 남기고, 성공하면 실행 ID 아래 산출물로 쓴다.
+func runCollectOne(lg *runlog.Log, cfg config.Config, client runner, verb, name, fileName string, stdout, stderr io.Writer) error {
+	command := verb
+	if name != "" {
+		command = verb + " " + name
+	}
+	result, err := runGateStep(lg, cfg, client, verb, name, command, stdout, stderr)
+	if err != nil {
+		return err
+	}
+	if werr := lg.WriteCollect(fileName, result.Stdout); werr != nil {
+		stepErr := lg.Step(runlog.Event{
+			Step:    verb,
+			Status:  "failed",
+			Command: command,
+			Host:    cfg.Server.Host,
+			User:    cfg.Server.User,
+			Error:   werr.Error(),
+		})
+		return errors.Join(werr, stepErr)
+	}
+	return nil
 }
 
 func runOneService(lg *runlog.Log, cfg config.Config, client runner, verb, name string, stdout, stderr io.Writer) error {
-	return runGateStep(lg, cfg, client, verb, name, verb+" "+name, stdout, stderr)
+	_, err := runGateStep(lg, cfg, client, verb, name, verb+" "+name, stdout, stderr)
+	return err
 }
 
 // runUpdate는 update를 시작한 뒤 update-status로 끝날 때까지 폴링한다.
 // 진행 상태는 이력에 남기고, failed면 그 단계에서 중단한다.
 func runUpdate(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr io.Writer) error {
-	if err := runGateStep(lg, cfg, client, ssh.UpdateVerb, "", ssh.UpdateVerb, stdout, stderr); err != nil {
+	if _, err := runGateStep(lg, cfg, client, ssh.UpdateVerb, "", ssh.UpdateVerb, stdout, stderr); err != nil {
 		return err
 	}
 	deadline := nowFunc().Add(timeoutOf(cfg, "step", defaultStepTimeout))
@@ -476,10 +522,10 @@ func readBootID(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr
 	return id, nil
 }
 
-func runGateStep(lg *runlog.Log, cfg config.Config, client runner, verb, name, command string, stdout, stderr io.Writer) error {
+func runGateStep(lg *runlog.Log, cfg config.Config, client runner, verb, name, command string, stdout, stderr io.Writer) (ssh.Result, error) {
 	result, runErr := runVerbTimed(cfg, client, verb, name)
 	if err := writeResult(stdout, stderr, result); err != nil {
-		return err
+		return result, err
 	}
 	status := "ok"
 	var exitCode *int
@@ -506,15 +552,15 @@ func runGateStep(lg *runlog.Log, cfg config.Config, client runner, verb, name, c
 		Stdout:   result.Stdout,
 		Stderr:   result.Stderr,
 	}); err != nil {
-		return err
+		return result, err
 	}
 	if runErr != nil {
-		return fmt.Errorf("%s: %w", command, runErr)
+		return result, fmt.Errorf("%s: %w", command, runErr)
 	}
 	if result.ExitCode != 0 {
-		return fmt.Errorf("%s: gate exit %d", command, result.ExitCode)
+		return result, fmt.Errorf("%s: gate exit %d", command, result.ExitCode)
 	}
-	return nil
+	return result, nil
 }
 
 // runVerbTimed는 timeouts.step 안에 게이트 동사 하나를 끝낸다.

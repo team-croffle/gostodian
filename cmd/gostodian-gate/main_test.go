@@ -159,6 +159,12 @@ func TestSudoArgvMatchesSudoersSpec(t *testing.T) {
 	if err != nil || strings.Join(argv, " ") != "sudo -n "+svcHelper+" reboot" {
 		t.Fatalf("reboot = %#v %v", argv, err)
 	}
+	for _, kind := range []string{"dnf", "boot", "secure", "fail2ban"} {
+		argv, err = sudoArgv("collect-logs", kind)
+		if err != nil || strings.Join(argv, " ") != "sudo -n "+svcHelper+" collect-logs "+kind {
+			t.Fatalf("collect-logs %s = %#v %v", kind, argv, err)
+		}
+	}
 }
 
 func TestSudoArgvOmitsDockerDnfSystemdRun(t *testing.T) {
@@ -170,6 +176,7 @@ func TestSudoArgvOmitsDockerDnfSystemdRun(t *testing.T) {
 		{"start", "svc-a"},
 		{"update", ""},
 		{"reboot", ""},
+		{"collect-logs", "boot"},
 	}
 	for _, tc := range cases {
 		argv, err := sudoArgv(tc.action, tc.name)
@@ -200,6 +207,15 @@ func TestSudoArgvRejectsBadName(t *testing.T) {
 	}
 	if _, err := sudoArgv("docker", "svc-a"); err == nil {
 		t.Fatal("docker action")
+	}
+	if _, err := sudoArgv("collect-logs", ""); err == nil {
+		t.Fatal("collect-logs without kind")
+	}
+	if _, err := sudoArgv("collect-logs", "nginx"); err == nil {
+		t.Fatal("unknown log kind")
+	}
+	if _, err := sudoArgv("collect-logs", "dnf extra"); err == nil {
+		t.Fatal("spaced kind")
 	}
 }
 
@@ -322,6 +338,76 @@ func TestHandleUpdateAndReboot(t *testing.T) {
 	}
 	assertRejected(t, "update now", nil, "rejected: args")
 	assertRejected(t, "reboot please", nil, "rejected: args")
+}
+
+func TestServiceArgvCollectLogsKeepsKind(t *testing.T) {
+	argv, err := serviceArgv("collect-logs", "dnf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"sudo", "-n", svcHelper, "collect-logs", "dnf"}
+	if strings.Join(argv, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("argv = %#v", argv)
+	}
+	if _, err := serviceArgv("collect-logs", ""); err == nil {
+		t.Fatal("empty kind was allowed")
+	}
+}
+
+func TestHandleCollectLogs(t *testing.T) {
+	prev := runService
+	t.Cleanup(func() { runService = prev })
+	var got []string
+	runService = func(verb, name string) ([]byte, error) {
+		got = append(got, verb+" "+name)
+		return []byte("body\n"), nil
+	}
+	for _, kind := range []string{"dnf", "boot", "secure", "fail2ban"} {
+		text, err := handle("collect-logs "+kind, nil, func(string) ([]byte, error) {
+			t.Fatal("status check")
+			return nil, nil
+		})
+		if err != nil || text != "body\n" {
+			t.Fatalf("%s: %q %v", kind, text, err)
+		}
+	}
+	if strings.Join(got, ",") != "collect-logs dnf,collect-logs boot,collect-logs secure,collect-logs fail2ban" {
+		t.Fatalf("got = %v", got)
+	}
+}
+
+func TestHandleCollectLogsRejectsUnknownKind(t *testing.T) {
+	prev := runService
+	t.Cleanup(func() { runService = prev })
+	runService = func(verb, name string) ([]byte, error) {
+		t.Fatalf("executed %s %s", verb, name)
+		return nil, nil
+	}
+	assertRejected(t, "collect-logs nginx", nil, "rejected: name")
+	assertRejected(t, "collect-logs", nil, "rejected: name")
+	assertRejected(t, "collect-logs dnf extra", nil, "rejected: args")
+	assertRejected(t, "resources now", nil, "rejected: args")
+}
+
+func TestHandleResources(t *testing.T) {
+	prev := runService
+	t.Cleanup(func() { runService = prev })
+	runService = func(verb, name string) ([]byte, error) {
+		if verb != "resources" || name != "" {
+			t.Fatalf("verb=%q name=%q", verb, name)
+		}
+		return []byte("ram 1\ncpu 1\nstorage 1\n"), nil
+	}
+	text, err := handle("resources", nil, func(string) ([]byte, error) {
+		t.Fatal("status check")
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "ram 1") || !strings.Contains(text, "cpu 1") || !strings.Contains(text, "storage 1") {
+		t.Fatalf("text = %q", text)
+	}
 }
 
 func TestHandleHealth(t *testing.T) {

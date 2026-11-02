@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"gostodian/internal/collect"
 )
 
 // bootIDPath는 부팅마다 바뀌는 커널 값이다. 읽기만 한다.
@@ -32,28 +34,33 @@ const svcHelper = "/usr/local/libexec/gostodian-svc"
 // update-status·health는 읽기만 하므로 sudo 없이 헬퍼만 부른다.
 var runService = func(verb, name string) ([]byte, error) {
 	ctx := context.Background()
+	argv, err := serviceArgv(verb, name)
+	if err != nil {
+		return nil, err
+	}
+	// #nosec G204 -- argv is a fixed helper path and allowlisted verb from serviceArgv
+	return exec.CommandContext(ctx, argv[0], argv[1:]...).Output()
+}
+
+// serviceArgv는 게이트 동사를 헬퍼 인자 목록으로 바꾼다.
+// collect-logs는 로그 종류를 마지막 인자로 남긴다. 종류를 비우면 실행하지 않는다.
+func serviceArgv(verb, name string) ([]string, error) {
 	switch verb {
-	case "update-status", "health":
-		// #nosec G204 -- fixed helper path and allowlisted verb only
-		return exec.CommandContext(ctx, svcHelper, verb).Output()
-	case "update", "reboot":
-		argv, err := sudoArgv(verb, "")
-		if err != nil {
-			return nil, err
+	case "update-status", "health", collect.ResourcesVerb:
+		if name != "" {
+			return nil, errors.New("unexpected name")
 		}
-		// #nosec G204 -- argv is a fixed sudoers-matching list from sudoArgv
-		return exec.CommandContext(ctx, argv[0], argv[1:]...).Output()
+		return []string{svcHelper, verb}, nil
+	case "update", "reboot":
+		return sudoArgv(verb, "")
+	case collect.LogsVerb:
+		return sudoArgv(verb, name)
 	case "stop", "start":
 		action, err := serviceAction(verb)
 		if err != nil {
 			return nil, err
 		}
-		argv, err := sudoArgv(action, name)
-		if err != nil {
-			return nil, err
-		}
-		// #nosec G204 -- argv is a fixed sudoers-matching list from sudoArgv
-		return exec.CommandContext(ctx, argv[0], argv[1:]...).Output()
+		return sudoArgv(action, name)
 	default:
 		return nil, errors.New("not allowed")
 	}
@@ -87,6 +94,11 @@ func sudoArgv(action, name string) ([]string, error) {
 			return nil, errors.New("unexpected name")
 		}
 		return []string{"sudo", "-n", svcHelper, action}, nil
+	case collect.LogsVerb:
+		if !collect.KnownKind(name) {
+			return nil, errors.New("invalid name")
+		}
+		return []string{"sudo", "-n", svcHelper, collect.LogsVerb, name}, nil
 	default:
 		return nil, errors.New("not allowed")
 	}
@@ -140,9 +152,9 @@ func handle(command string, names map[string]struct{}, run func(string) ([]byte,
 			return "", nil
 		}
 		return bootID(readBootID)
-	case "stop", "start":
+	case "stop", "start", collect.LogsVerb:
 		return applyService(verb, name, runService)
-	case "update", "update-status", "reboot", "health":
+	case "update", "update-status", "reboot", "health", collect.ResourcesVerb:
 		return applyHost(verb, runService)
 	default:
 		return "", rejected("verb", command)
@@ -158,7 +170,7 @@ func applyService(verb, name string, run func(string, string) ([]byte, error)) (
 	return string(out), nil
 }
 
-// applyHost는 이름 없는 호스트 동사(update, update-status, reboot)를 실행한다.
+// applyHost는 이름 없는 호스트 동사(update, update-status, reboot, health, resources)를 실행한다.
 func applyHost(verb string, run func(string, string) ([]byte, error)) (string, error) {
 	out, err := run(verb, "")
 	if err != nil {
@@ -199,11 +211,16 @@ func parseCommand(command string, names map[string]struct{}) (string, string, er
 			return "", "", rejected("name", command)
 		}
 		return verb, name, nil
-	case "update", "update-status", "reboot", "health":
+	case "update", "update-status", "reboot", "health", collect.ResourcesVerb:
 		if len(fields) != 1 {
 			return "", "", rejected("args", command)
 		}
 		return verb, "", nil
+	case collect.LogsVerb:
+		if len(fields) != 2 || !collect.KnownKind(fields[1]) {
+			return "", "", rejected("name", command)
+		}
+		return verb, fields[1], nil
 	case "stop", "start":
 		if len(fields) != 2 {
 			return "", "", rejected("name", command)

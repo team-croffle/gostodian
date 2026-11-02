@@ -197,12 +197,12 @@ func TestRunCallsSSH(t *testing.T) {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	history := readHistory(t, logDir)
-	// status + update + update-status + boot-id + reboot + reconnect + health
-	if history.Status != "ok" || len(history.Steps) != 7 || history.Steps[0].Command != ssh.StatusCommand || history.Steps[0].Stdout != "ok" {
+	// status + update + update-status + boot-id + reboot + reconnect + 로그 4 + resources + health
+	if history.Status != "ok" || len(history.Steps) != 12 || history.Steps[0].Command != ssh.StatusCommand || history.Steps[0].Stdout != "ok" {
 		t.Fatalf("history = %+v", history)
 	}
-	if history.Steps[6].Command != ssh.HealthVerb || history.Steps[6].Status != "ok" {
-		t.Fatalf("health = %+v", history.Steps[6])
+	if history.Steps[len(history.Steps)-1].Command != ssh.HealthVerb || history.Steps[len(history.Steps)-1].Status != "ok" {
+		t.Fatalf("health = %+v", history.Steps[len(history.Steps)-1])
 	}
 	if strings.Contains(historyText(t, logDir), "id_ed25519") {
 		t.Fatal("identity path was written to the log")
@@ -253,15 +253,15 @@ func TestRunStopStartHistory(t *testing.T) {
 	if err := run([]string{"run", "--config", cfgPath, "--log-dir", logDir}, &stdout, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	wantGot := "stop svc-a,stop svc-b,update,update-status,boot-id,reboot,boot-id,start svc-b,start svc-a,health"
+	wantGot := "stop svc-a,stop svc-b,update,update-status,boot-id,reboot,boot-id,collect-logs dnf,collect-logs boot,collect-logs secure,collect-logs fail2ban,resources,start svc-b,start svc-a,health"
 	if strings.Join(got, ",") != wantGot {
 		t.Fatalf("got = %v", got)
 	}
 	history := readHistory(t, logDir)
-	if history.Status != "ok" || len(history.Steps) != 11 {
+	if history.Status != "ok" || len(history.Steps) != 16 {
 		t.Fatalf("history = %+v", history)
 	}
-	want := []string{"status", "stop svc-a", "stop svc-b", "update", "update-status", "boot-id", "reboot", "boot-id", "start svc-b", "start svc-a", "health"}
+	want := []string{"status", "stop svc-a", "stop svc-b", "update", "update-status", "boot-id", "reboot", "boot-id", "collect-logs dnf", "collect-logs boot", "collect-logs secure", "collect-logs fail2ban", "resources", "start svc-b", "start svc-a", "health"}
 	for i, command := range want {
 		if history.Steps[i].Command != command || history.Steps[i].Status != "ok" {
 			t.Fatalf("step %d = %+v", i, history.Steps[i])
@@ -272,6 +272,92 @@ func TestRunStopStartHistory(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "stop svc-a") || !strings.Contains(stdout.String(), "start svc-a") {
 		t.Fatalf("stdout = %q", stdout.String())
+	}
+	files := readCollects(t, logDir)
+	if files["dnf"] != "collect-logs dnf\n" || files["resources"] != "resources\n" {
+		t.Fatalf("collects = %#v", files)
+	}
+	if _, ok := files["secure"]; !ok {
+		t.Fatal("secure collect missing")
+	}
+}
+
+func TestRunCollectFailureContinues(t *testing.T) {
+	restoreConnect(t)
+	restoreClock(t)
+	silenceNotify(t)
+	var got []string
+	boots := 0
+	connect = func(config.Config) runner {
+		return &stubRunner{
+			run: func() (ssh.Result, error) {
+				return ssh.Result{Stdout: "status-ok\n"}, nil
+			},
+			runVerb: func(verb, name string) (ssh.Result, error) {
+				label := verb
+				if name != "" {
+					label += " " + name
+				}
+				got = append(got, label)
+				switch verb {
+				case ssh.UpdateStatusVerb:
+					return ssh.Result{Stdout: "done\n"}, nil
+				case ssh.BootIDVerb:
+					boots++
+					if boots == 1 {
+						return ssh.Result{Stdout: "boot-before\n"}, nil
+					}
+					return ssh.Result{Stdout: "boot-after\n"}, nil
+				case ssh.CollectLogsVerb:
+					if name == "secure" {
+						return ssh.Result{ExitCode: 1, Stderr: "missing\n"}, nil
+					}
+					return ssh.Result{Stdout: label + "\n"}, nil
+				case ssh.ResourcesVerb:
+					return ssh.Result{Stdout: "ram 1\ncpu 1\nstorage 1\n"}, nil
+				default:
+					return ssh.Result{Stdout: "ok\n"}, nil
+				}
+			},
+		}
+	}
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	body := "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: secrets/id_ed25519\n  known_hosts_file: secrets/known_hosts\npipeline:\n  docker_order:\n    - svc-a\nvpn:\n  interface: \"\"\n"
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logDir := t.TempDir()
+	err := run([]string{"run", "--config", cfgPath, "--log-dir", logDir}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "collect-logs secure") {
+		t.Fatalf("err = %v", err)
+	}
+	joined := strings.Join(got, ",")
+	if !strings.Contains(joined, "collect-logs fail2ban") || !strings.Contains(joined, "resources") || !strings.Contains(joined, "start svc-a") || !strings.Contains(joined, "health") {
+		t.Fatalf("got = %v", got)
+	}
+	history := readHistory(t, logDir)
+	if history.Status != "failed" {
+		t.Fatalf("history = %+v", history)
+	}
+	var sawFail, sawHealth bool
+	for _, step := range history.Steps {
+		if step.Command == "collect-logs secure" && step.Status == "failed" {
+			sawFail = true
+		}
+		if step.Command == ssh.HealthVerb && step.Status == "ok" {
+			sawHealth = true
+		}
+	}
+	if !sawFail || !sawHealth {
+		t.Fatalf("history = %+v", history)
+	}
+	files := readCollects(t, logDir)
+	if _, ok := files["secure"]; ok {
+		t.Fatal("failed kind was written")
+	}
+	if files["dnf"] == "" || files["resources"] == "" {
+		t.Fatalf("collects = %#v", files)
 	}
 }
 
@@ -891,7 +977,7 @@ func TestRunNotifyFailureKeepsCheckResult(t *testing.T) {
 			if step.Status != "failed" || step.Error != "discord webhook: send failed" {
 				t.Fatalf("notify step = %+v", step)
 			}
-		case "update", "update-status", "boot-id", "reboot", "reconnect", "stop", "start", "health":
+		case "update", "update-status", "boot-id", "reboot", "reconnect", "stop", "start", "health", "collect-logs", "resources":
 			if step.Status != "ok" {
 				t.Fatalf("maintenance step = %+v", step)
 			}
@@ -921,6 +1007,32 @@ type historyFile struct {
 		Error   string `json:"error"`
 		Stdout  string `json:"stdout"`
 	} `json:"steps"`
+}
+
+func readCollects(t *testing.T, logDir string) map[string]string {
+	t.Helper()
+	root := filepath.Join(logDir, "collects")
+	runs, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("collect runs = %d", len(runs))
+	}
+	dir := filepath.Join(root, runs[0].Name())
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[entry.Name()] = string(data)
+	}
+	return out
 }
 
 func readHistory(t *testing.T, dir string) historyFile {

@@ -13,12 +13,14 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
+
+	"gostodian/internal/collect"
 )
 
 // StatusCommand는 게이트에 보내는 동사다. 경로나 셸 문자열로 조립하지 않는다.
 const StatusCommand = "status"
 
-// 게이트 동사. stop·start만 서비스 이름을 붙인다.
+// 게이트 동사. stop·start는 서비스 이름, collect-logs는 로그 종류를 붙인다.
 const (
 	StopVerb         = "stop"
 	StartVerb        = "start"
@@ -27,6 +29,8 @@ const (
 	RebootVerb       = "reboot"
 	BootIDVerb       = "boot-id"
 	HealthVerb       = "health"
+	CollectLogsVerb  = collect.LogsVerb
+	ResourcesVerb    = collect.ResourcesVerb
 )
 
 // 접속 실패 종류. 재시도 없이 바로 반환.
@@ -74,7 +78,8 @@ func (c *Client) Run() (Result, error) {
 }
 
 // RunVerb는 게이트 동사와 선택 이름을 보낸다. 이름은 공백 없이 그대로 한 토큰이다.
-// 셸로 조립하지 않는다. stop·start는 이름이 필요하고, 그 밖의 동사는 이름이 없어야 한다.
+// 셸로 조립하지 않는다. stop·start는 서비스 이름, collect-logs는 고정 로그 종류가 필요하다.
+// 그 밖의 동사는 이름이 없어야 한다.
 func (c *Client) RunVerb(verb, name string) (result Result, err error) {
 	command, err := gateCommand(verb, name)
 	if err != nil {
@@ -148,11 +153,16 @@ func gateCommand(verb, name string) (string, error) {
 	verb = strings.TrimSpace(verb)
 	name = strings.TrimSpace(name)
 	switch verb {
-	case StatusCommand, BootIDVerb, UpdateVerb, UpdateStatusVerb, RebootVerb, HealthVerb:
+	case StatusCommand, BootIDVerb, UpdateVerb, UpdateStatusVerb, RebootVerb, HealthVerb, ResourcesVerb:
 		if name != "" {
 			return "", errors.New("gate command: unexpected name")
 		}
 		return verb, nil
+	case CollectLogsVerb:
+		if !collect.KnownKind(name) {
+			return "", errors.New("gate command: invalid name")
+		}
+		return verb + " " + name, nil
 	case StopVerb, StartVerb:
 		if name == "" || strings.ContainsAny(name, " \t\n\r") {
 			return "", errors.New("gate command: invalid name")

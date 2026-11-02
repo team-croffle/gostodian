@@ -112,6 +112,20 @@ func (l *Log) Finish(status string) error {
 	return l.Close()
 }
 
+// WriteCollect는 이 실행 ID 아래 수집 산출물 하나를 쓴다.
+// name은 경로가 아닌 파일 이름이다. 본문에 개인키가 있으면 가린다.
+func (l *Log) WriteCollect(name, body string) error {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) || name != filepath.Base(name) {
+		return errors.New("collect name")
+	}
+	dir := filepath.Join(l.dir, "collects", l.id)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create collect dir: %w", err)
+	}
+	path := filepath.Join(dir, name)
+	return os.WriteFile(path, []byte(scrub(body)), 0o600) //nolint:gosec // 운영자가 지정한 로그 디렉터리 안의 실행 ID
+}
+
 // Close는 구조화 로그 파일을 닫는다.
 func (l *Log) Close() error {
 	if l.fileClosed || l.file == nil {

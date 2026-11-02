@@ -132,6 +132,23 @@ func TestGateCommandStopStart(t *testing.T) {
 	if _, err := gateCommand(StatusCommand, "svc-a"); err == nil {
 		t.Fatal("status with name")
 	}
+	got, err = gateCommand(CollectLogsVerb, "secure")
+	if err != nil || got != "collect-logs secure" {
+		t.Fatalf("collect-logs = %q %v", got, err)
+	}
+	if _, err := gateCommand(CollectLogsVerb, "nginx"); err == nil {
+		t.Fatal("unknown log kind")
+	}
+	if _, err := gateCommand(CollectLogsVerb, ""); err == nil {
+		t.Fatal("empty log kind")
+	}
+	got, err = gateCommand(ResourcesVerb, "")
+	if err != nil || got != ResourcesVerb {
+		t.Fatalf("resources = %q %v", got, err)
+	}
+	if _, err := gateCommand(ResourcesVerb, "ram"); err == nil {
+		t.Fatal("resources with name")
+	}
 }
 
 func TestRunVerbSendsStop(t *testing.T) {
