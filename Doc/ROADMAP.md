@@ -166,6 +166,12 @@
 - MinIO 미기동 시 산출물은 로컬, 알림
 - 스케줄로 한 번 이상 끝까지 실행
 
+**별도. 이 저장소 밖**
+
+- `gostodian-svc`는 별도 저장소에서 구현하고, 홈랩 `/usr/local/libexec/gostodian-svc`에 둔다
+- 이 저장소의 게이트는 그 경로를 호출만 한다. v1.0.0 실서버 확인 전에 필요하다
+- 호출은 `down`, `start`, `update`, `update-status`, `reboot`, `collect-logs`, `health`, `resources`
+
 ### v1.1.0 (감시)
 
 **구현**
