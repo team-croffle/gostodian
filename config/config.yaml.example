@@ -28,6 +28,9 @@ pipeline:
   redact:
     hostnames: []
     accounts: []
+  # 필터와 리댁션을 거친 본문에서 이 문자열을 포함한 줄을 센다.
+  # 센 줄이 0이면 이상 없음. 종류를 비우면 그 종류도 이상 없음.
+  rules: {}
 
 # 경로는 compose의 GOSTODIAN_*_FILE 이 있으면 그쪽이 이긴다.
 secrets:

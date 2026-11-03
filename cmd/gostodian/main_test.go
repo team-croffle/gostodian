@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"gostodian/internal/config"
 	"gostodian/internal/discord"
+	"gostodian/internal/judge"
 	"gostodian/internal/ssh"
 	"gostodian/internal/vpn"
 )
@@ -197,8 +199,8 @@ func TestRunCallsSSH(t *testing.T) {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	history := readHistory(t, logDir)
-	// status + update + update-status + boot-id + reboot + reconnect + 로그 4 + resources + health
-	if history.Status != "ok" || len(history.Steps) != 12 || history.Steps[0].Command != ssh.StatusCommand || history.Steps[0].Stdout != "ok" {
+	// status + update + update-status + boot-id + reboot + reconnect + 로그 4 + resources + judge + health
+	if history.Status != "ok" || len(history.Steps) != 13 || history.Steps[0].Command != ssh.StatusCommand || history.Steps[0].Stdout != "ok" {
 		t.Fatalf("history = %+v", history)
 	}
 	if history.Steps[len(history.Steps)-1].Command != ssh.HealthVerb || history.Steps[len(history.Steps)-1].Status != "ok" {
@@ -258,10 +260,10 @@ func TestRunStopStartHistory(t *testing.T) {
 		t.Fatalf("got = %v", got)
 	}
 	history := readHistory(t, logDir)
-	if history.Status != "ok" || len(history.Steps) != 16 {
+	if history.Status != "ok" || len(history.Steps) != 17 {
 		t.Fatalf("history = %+v", history)
 	}
-	want := []string{"status", "stop svc-a", "stop svc-b", "update", "update-status", "boot-id", "reboot", "boot-id", "collect-logs dnf", "collect-logs boot", "collect-logs secure", "collect-logs fail2ban", "resources", "start svc-b", "start svc-a", "health"}
+	want := []string{"status", "stop svc-a", "stop svc-b", "update", "update-status", "boot-id", "reboot", "boot-id", "collect-logs dnf", "collect-logs boot", "collect-logs secure", "collect-logs fail2ban", "resources", "judge", "start svc-b", "start svc-a", "health"}
 	for i, command := range want {
 		if history.Steps[i].Command != command || history.Steps[i].Status != "ok" {
 			t.Fatalf("step %d = %+v", i, history.Steps[i])
@@ -397,6 +399,72 @@ func TestRunCollectRedactsBody(t *testing.T) {
 	}
 	if !strings.Contains(history, "homelab.example") {
 		t.Fatal("history dropped the target host field")
+	}
+}
+
+func TestRunCollectJudgmentUsesExecutionID(t *testing.T) {
+	restoreConnect(t)
+	restoreClock(t)
+	silenceNotify(t)
+	boots := 0
+	connect = func(config.Config) runner {
+		return &stubRunner{
+			run: func() (ssh.Result, error) {
+				return ssh.Result{Stdout: "status-ok\n"}, nil
+			},
+			runVerb: func(verb, name string) (ssh.Result, error) {
+				switch verb {
+				case ssh.UpdateStatusVerb:
+					return ssh.Result{Stdout: "done\n"}, nil
+				case ssh.BootIDVerb:
+					boots++
+					if boots == 1 {
+						return ssh.Result{Stdout: "boot-before\n"}, nil
+					}
+					return ssh.Result{Stdout: "boot-after\n"}, nil
+				case ssh.CollectLogsVerb:
+					if name == "secure" {
+						return ssh.Result{Stdout: "Failed password for [account]\nok\n"}, nil
+					}
+					if name == "dnf" {
+						return ssh.Result{}, fmt.Errorf("missing")
+					}
+					return ssh.Result{Stdout: "ok\n"}, nil
+				default:
+					return ssh.Result{Stdout: "ok\n"}, nil
+				}
+			},
+		}
+	}
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	body := "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: secrets/id_ed25519\n  known_hosts_file: secrets/known_hosts\npipeline:\n  docker_order: []\n  rules:\n    secure:\n      - Failed password\n    boot: []\nvpn:\n  interface: \"\"\n"
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logDir := t.TempDir()
+	err := run([]string{"run", "--config", cfgPath, "--log-dir", logDir}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "collect-logs dnf") {
+		t.Fatalf("err = %v", err)
+	}
+	history := readHistory(t, logDir)
+	if history.ExecutionID == "" || len(history.Judgments) != 5 {
+		t.Fatalf("history = %+v", history)
+	}
+	got := map[string]string{}
+	matches := map[string]int{}
+	for _, item := range history.Judgments {
+		got[item.Category] = item.Result
+		matches[item.Category] = item.Matches
+	}
+	if got["secure"] != judge.ResultFound || matches["secure"] != 1 {
+		t.Fatalf("secure = %s %d", got["secure"], matches["secure"])
+	}
+	if got["boot"] != judge.ResultClear || got["dnf"] != judge.ResultMissing {
+		t.Fatalf("judgments = %+v", history.Judgments)
+	}
+	if !strings.Contains(historyText(t, logDir), history.ExecutionID) {
+		t.Fatal("judgment file is not this execution")
 	}
 }
 
@@ -1095,7 +1163,7 @@ func TestRunNotifyFailureKeepsCheckResult(t *testing.T) {
 			if step.Status != "failed" || step.Error != "discord webhook: send failed" {
 				t.Fatalf("notify step = %+v", step)
 			}
-		case "update", "update-status", "boot-id", "reboot", "reconnect", "stop", "start", "health", "collect-logs", "resources":
+		case "update", "update-status", "boot-id", "reboot", "reconnect", "stop", "start", "health", "collect-logs", "resources", "judge":
 			if step.Status != "ok" {
 				t.Fatalf("maintenance step = %+v", step)
 			}
@@ -1116,8 +1184,14 @@ func TestRunNotifyFailureKeepsCheckResult(t *testing.T) {
 }
 
 type historyFile struct {
-	Status string `json:"status"`
-	Steps  []struct {
+	ExecutionID string `json:"execution_id"`
+	Status      string `json:"status"`
+	Judgments   []struct {
+		Category string `json:"category"`
+		Result   string `json:"result"`
+		Matches  int    `json:"matches"`
+	} `json:"judgments"`
+	Steps []struct {
 		Step      string `json:"step"`
 		Status    string `json:"status"`
 		Command   string `json:"command"`

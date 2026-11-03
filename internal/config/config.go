@@ -39,10 +39,11 @@ type SSHConfig struct {
 }
 
 type PipelineConfig struct {
-	DockerOrder []string          `yaml:"docker_order"`
-	Timeouts    map[string]string `yaml:"timeouts"`
-	Filter      FilterConfig      `yaml:"filter"`
-	Redact      RedactConfig      `yaml:"redact"`
+	DockerOrder []string            `yaml:"docker_order"`
+	Timeouts    map[string]string   `yaml:"timeouts"`
+	Filter      FilterConfig        `yaml:"filter"`
+	Redact      RedactConfig        `yaml:"redact"`
+	Rules       map[string][]string `yaml:"rules"`
 }
 
 // RedactConfig는 로그에 더 나오는 호스트명과 계정이다.
@@ -164,7 +165,22 @@ func Validate(cfg Config) error {
 	if err := validateFilter(cfg.Pipeline.Filter); err != nil {
 		return err
 	}
-	return validateNames("pipeline.redact", append(append([]string{}, cfg.Pipeline.Redact.Hostnames...), cfg.Pipeline.Redact.Accounts...))
+	if err := validateNames("pipeline.redact", append(append([]string{}, cfg.Pipeline.Redact.Hostnames...), cfg.Pipeline.Redact.Accounts...)); err != nil {
+		return err
+	}
+	return validateRules(cfg.Pipeline.Rules)
+}
+
+func validateRules(rules map[string][]string) error {
+	for name, patterns := range rules {
+		if !collect.KnownCategory(name) {
+			return fmt.Errorf("invalid config: pipeline.rules.%s", name)
+		}
+		if err := validatePatterns(name, patterns); err != nil {
+			return fmt.Errorf("invalid config: pipeline.rules.%s", name)
+		}
+	}
+	return nil
 }
 
 func validateNames(field string, names []string) error {

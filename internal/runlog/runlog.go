@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"gostodian/internal/judge"
 	"gostodian/internal/redact"
 )
 
@@ -26,6 +27,7 @@ type Log struct {
 	historyWritten bool
 	fileClosed     bool
 	redact         redact.Options
+	judgments      []Judgment
 }
 
 // Event는 구조화 로그 한 줄이자 이력의 단계 하나
@@ -45,11 +47,19 @@ type Event struct {
 	Truncated   bool      `json:"truncated,omitempty"`
 }
 
+// Judgment는 실행 ID에 남는 종류별 판정이다.
+type Judgment struct {
+	Category string `json:"category"`
+	Result   string `json:"result"`
+	Matches  int    `json:"matches"`
+}
+
 // History는 실행 하나의 성공/실패 파일
 type History struct {
-	ExecutionID string  `json:"execution_id"`
-	Status      string  `json:"status"`
-	Steps       []Event `json:"steps"`
+	ExecutionID string     `json:"execution_id"`
+	Status      string     `json:"status"`
+	Steps       []Event    `json:"steps"`
+	Judgments   []Judgment `json:"judgments,omitempty"`
 }
 
 // Open은 dir 아래에 새 실행 로그 생성. dir이 없으면 생성
@@ -80,6 +90,14 @@ func (l *Log) ID() string {
 	return l.id
 }
 
+// SetJudgments는 이 실행의 종류별 판정을 성공/실패 파일에 남길 내용으로 기억한다.
+func (l *Log) SetJudgments(items []judge.Result) {
+	l.judgments = make([]Judgment, len(items))
+	for i, item := range items {
+		l.judgments[i] = Judgment{Category: item.Category, Result: item.Result, Matches: item.Matches}
+	}
+}
+
 // SetRedact는 이 실행의 출력에서 가릴 호스트명과 계정이다.
 // server.host와 server.user도 여기 포함한다. 이력의 host, user 필드는 그대로다.
 func (l *Log) SetRedact(opt redact.Options) {
@@ -107,6 +125,7 @@ func (l *Log) Finish(status string) error {
 			ExecutionID: l.id,
 			Status:      status,
 			Steps:       l.steps,
+			Judgments:   l.judgments,
 		}
 		data, err := json.MarshalIndent(history, "", "  ")
 		if err != nil {

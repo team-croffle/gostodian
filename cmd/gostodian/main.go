@@ -13,6 +13,7 @@ import (
 	"gostodian/internal/config"
 	"gostodian/internal/discord"
 	"gostodian/internal/filter"
+	"gostodian/internal/judge"
 	"gostodian/internal/pipeline"
 	"gostodian/internal/redact"
 	"gostodian/internal/runlog"
@@ -254,7 +255,10 @@ func runMaintenance(lg *runlog.Log, cfg config.Config, client runner, stdout, st
 	if err := runReboot(lg, cfg, client, stdout, stderr); err != nil {
 		return err
 	}
-	collectErr := runCollect(lg, cfg, client, stdout, stderr)
+	bodies, collectErr := runCollect(lg, cfg, client, stdout, stderr)
+	if err := recordJudgment(lg, cfg, bodies); err != nil {
+		return errors.Join(collectErr, err)
+	}
 	for _, name := range pipeline.StartOrder(cfg.Pipeline.DockerOrder) {
 		if err := runOneService(lg, cfg, client, ssh.StartVerb, name, stdout, stderr); err != nil {
 			return errors.Join(collectErr, err)
@@ -268,22 +272,29 @@ func runMaintenance(lg *runlog.Log, cfg config.Config, client runner, stdout, st
 
 // runCollect는 재부팅·재접속 뒤, 서비스 기동 전에 로그 네 종류와 리소스를 모은다.
 // 한 건이 실패해도 다음 수집은 계속하고, 실패는 모아서 반환한다.
-func runCollect(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr io.Writer) error {
+func runCollect(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr io.Writer) (map[string]string, error) {
+	bodies := map[string]string{}
 	var joined error
 	for _, kind := range collect.LogKinds() {
-		if err := runCollectOne(lg, cfg, client, collect.LogsVerb, kind, kind, stdout, stderr); err != nil {
+		body, err := runCollectOne(lg, cfg, client, collect.LogsVerb, kind, kind, stdout, stderr)
+		if err != nil {
 			joined = errors.Join(joined, err)
+			continue
 		}
+		bodies[kind] = body
 	}
-	if err := runCollectOne(lg, cfg, client, collect.ResourcesVerb, "", collect.ResourcesVerb, stdout, stderr); err != nil {
+	body, err := runCollectOne(lg, cfg, client, collect.ResourcesVerb, "", collect.ResourcesVerb, stdout, stderr)
+	if err != nil {
 		joined = errors.Join(joined, err)
+	} else {
+		bodies[collect.ResourcesVerb] = body
 	}
-	return joined
+	return bodies, joined
 }
 
 // runCollectOne은 게이트 동사 하나를 이력에 남기고, 성공하면 실행 ID 아래 산출물로 쓴다.
 // 저장하는 본문은 점검 머신 설정의 필터를 거친 것이다.
-func runCollectOne(lg *runlog.Log, cfg config.Config, client runner, verb, name, fileName string, stdout, stderr io.Writer) error {
+func runCollectOne(lg *runlog.Log, cfg config.Config, client runner, verb, name, fileName string, stdout, stderr io.Writer) (string, error) {
 	command := verb
 	if name != "" {
 		command = verb + " " + name
@@ -294,7 +305,7 @@ func runCollectOne(lg *runlog.Log, cfg config.Config, client runner, verb, name,
 		return filtered.Truncated
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
 	if werr := lg.WriteCollect(fileName, result.Stdout); werr != nil {
 		stepErr := lg.Step(runlog.Event{
@@ -305,9 +316,32 @@ func runCollectOne(lg *runlog.Log, cfg config.Config, client runner, verb, name,
 			User:    cfg.Server.User,
 			Error:   werr.Error(),
 		})
-		return errors.Join(werr, stepErr)
+		return "", errors.Join(werr, stepErr)
 	}
-	return nil
+	return result.Stdout, nil
+}
+
+// recordJudgment는 필터와 리댁션을 거친 본문을 종류별 규칙으로 판정하고 실행 ID에 남긴다.
+// 매칭이 없어도 점검을 실패로 만들지 않는다. 수집이 없는 종류는 이상 없음으로 적지 않는다.
+func recordJudgment(lg *runlog.Log, cfg config.Config, bodies map[string]string) error {
+	categories := append(collect.LogKinds(), collect.ResourcesVerb)
+	items := make([]judge.Result, 0, len(categories))
+	var lines []string
+	for _, category := range categories {
+		body, ok := bodies[category]
+		item := judge.Evaluate(category, body, cfg.Pipeline.Rules[category], ok)
+		items = append(items, item)
+		lines = append(lines, category+": "+item.Result)
+	}
+	lg.SetJudgments(items)
+	return lg.Step(runlog.Event{
+		Step:    "judge",
+		Status:  "ok",
+		Command: "judge",
+		Host:    cfg.Server.Host,
+		User:    cfg.Server.User,
+		Stdout:  strings.Join(lines, "\n"),
+	})
 }
 
 func runOneService(lg *runlog.Log, cfg config.Config, client runner, verb, name string, stdout, stderr io.Writer) error {
