@@ -14,6 +14,7 @@ import (
 	"gostodian/internal/discord"
 	"gostodian/internal/filter"
 	"gostodian/internal/pipeline"
+	"gostodian/internal/redact"
 	"gostodian/internal/runlog"
 	"gostodian/internal/ssh"
 	"gostodian/internal/vpn"
@@ -164,6 +165,7 @@ func runSub(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	defer func() { _ = lg.Close() }() //nolint:errcheck // history already flushed; close is best-effort
+	lg.SetRedact(redactOptions(cfg))
 
 	if err := lg.Append(runlog.Event{
 		Step:    "run",
@@ -534,6 +536,9 @@ func runGateStep(lg *runlog.Log, cfg config.Config, client runner, verb, name, c
 	if prepare != nil && runErr == nil && result.ExitCode == 0 {
 		truncated = prepare(&result)
 	}
+	opt := redactOptions(cfg)
+	result.Stdout = redact.Apply(result.Stdout, opt)
+	result.Stderr = redact.Apply(result.Stderr, opt)
 	if err := writeResult(stdout, stderr, result); err != nil {
 		return result, err
 	}
@@ -594,6 +599,13 @@ func runVerbTimed(cfg config.Config, client runner, verb, name string) (ssh.Resu
 			return ssh.Result{}, fmt.Errorf("%s %s: timeout", verb, name)
 		}
 		return ssh.Result{}, fmt.Errorf("%s: timeout", verb)
+	}
+}
+
+func redactOptions(cfg config.Config) redact.Options {
+	return redact.Options{
+		Hosts:    append([]string{cfg.Server.Host}, cfg.Pipeline.Redact.Hostnames...),
+		Accounts: append([]string{cfg.Server.User}, cfg.Pipeline.Redact.Accounts...),
 	}
 }
 

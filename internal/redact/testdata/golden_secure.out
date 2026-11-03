@@ -1,0 +1,5 @@
+Aug  2 18:51:00 [hostname] sshd-session[166]: Failed password for user [account] from [ip] port 22
+Aug  2 18:51:01 [hostname] sshd-session[166]: Accepted publickey for [account] from [ip] port 22
+Aug  2 18:51:02 [hostname] sudo[1]: [account] : USER=[account] ; token=[token]
+[redacted]
+Bearer [token]

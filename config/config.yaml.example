@@ -23,6 +23,11 @@ pipeline:
   filter:
     max_runes: 262144
     categories: {}
+  # 본문에 나온 호스트명, IP, 계정, 토큰을 가린다.
+  # server.host와 server.user는 여기 없어도 가린다. 이력의 host, user 필드는 남긴다.
+  redact:
+    hostnames: []
+    accounts: []
 
 # 경로는 compose의 GOSTODIAN_*_FILE 이 있으면 그쪽이 이긴다.
 secrets:

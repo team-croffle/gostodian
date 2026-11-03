@@ -343,6 +343,63 @@ func TestRunCollectFilterTruncates(t *testing.T) {
 	}
 }
 
+func TestRunCollectRedactsBody(t *testing.T) {
+	restoreConnect(t)
+	restoreClock(t)
+	silenceNotify(t)
+	boots := 0
+	connect = func(config.Config) runner {
+		return &stubRunner{
+			run: func() (ssh.Result, error) {
+				return ssh.Result{Stdout: "status-ok\n"}, nil
+			},
+			runVerb: func(verb, name string) (ssh.Result, error) {
+				switch verb {
+				case ssh.UpdateStatusVerb:
+					return ssh.Result{Stdout: "done\n"}, nil
+				case ssh.BootIDVerb:
+					boots++
+					if boots == 1 {
+						return ssh.Result{Stdout: "boot-before\n"}, nil
+					}
+					return ssh.Result{Stdout: "boot-after\n"}, nil
+				case ssh.CollectLogsVerb:
+					if name == "secure" {
+						return ssh.Result{Stdout: "Aug  2 18:51:00 lab-host sshd[1]: Failed password for user ada from 203.0.113.10\n"}, nil
+					}
+					return ssh.Result{Stdout: "ok\n"}, nil
+				default:
+					return ssh.Result{Stdout: "ok\n"}, nil
+				}
+			},
+		}
+	}
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	body := "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: secrets/id_ed25519\n  known_hosts_file: secrets/known_hosts\npipeline:\n  docker_order: []\n  redact:\n    hostnames:\n      - lab-host\n    accounts:\n      - ada\nvpn:\n  interface: \"\"\n"
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logDir := t.TempDir()
+	if err := run([]string{"run", "--config", cfgPath, "--log-dir", logDir}, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	files := readCollects(t, logDir)
+	if strings.Contains(files["secure"], "lab-host") || strings.Contains(files["secure"], "ada") || strings.Contains(files["secure"], "203.0.113.10") {
+		t.Fatalf("secure = %q", files["secure"])
+	}
+	if !strings.Contains(files["secure"], "[hostname]") || !strings.Contains(files["secure"], "[account]") || !strings.Contains(files["secure"], "[ip]") {
+		t.Fatalf("secure = %q", files["secure"])
+	}
+	history := historyText(t, logDir)
+	if strings.Contains(history, "203.0.113.10") || strings.Contains(history, "lab-host") {
+		t.Fatalf("history leaked: %s", history)
+	}
+	if !strings.Contains(history, "homelab.example") {
+		t.Fatal("history dropped the target host field")
+	}
+}
+
 func TestRunCollectFailureContinues(t *testing.T) {
 	restoreConnect(t)
 	restoreClock(t)

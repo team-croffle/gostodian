@@ -42,6 +42,14 @@ type PipelineConfig struct {
 	DockerOrder []string          `yaml:"docker_order"`
 	Timeouts    map[string]string `yaml:"timeouts"`
 	Filter      FilterConfig      `yaml:"filter"`
+	Redact      RedactConfig      `yaml:"redact"`
+}
+
+// RedactConfig는 로그에 더 나오는 호스트명과 계정이다.
+// server.host와 server.user는 여기 없어도 본문에서 가린다.
+type RedactConfig struct {
+	Hostnames []string `yaml:"hostnames"`
+	Accounts  []string `yaml:"accounts"`
 }
 
 // FilterConfig는 점검 머신에서 수집 본문에 적용하는 규칙이다.
@@ -153,7 +161,19 @@ func Validate(cfg Config) error {
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required config: %s", strings.Join(missing, ", "))
 	}
-	return validateFilter(cfg.Pipeline.Filter)
+	if err := validateFilter(cfg.Pipeline.Filter); err != nil {
+		return err
+	}
+	return validateNames("pipeline.redact", append(append([]string{}, cfg.Pipeline.Redact.Hostnames...), cfg.Pipeline.Redact.Accounts...))
+}
+
+func validateNames(field string, names []string) error {
+	for _, name := range names {
+		if strings.TrimSpace(name) == "" || strings.ContainsAny(name, "\r\n") {
+			return fmt.Errorf("invalid config: %s", field)
+		}
+	}
+	return nil
 }
 
 func validateFilter(f FilterConfig) error {

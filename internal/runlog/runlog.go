@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"gostodian/internal/redact"
 )
 
 const stderrLimit = 500
@@ -23,6 +25,7 @@ type Log struct {
 	steps          []Event
 	historyWritten bool
 	fileClosed     bool
+	redact         redact.Options
 }
 
 // Event는 구조화 로그 한 줄이자 이력의 단계 하나
@@ -77,6 +80,12 @@ func (l *Log) ID() string {
 	return l.id
 }
 
+// SetRedact는 이 실행의 출력에서 가릴 호스트명과 계정이다.
+// server.host와 server.user도 여기 포함한다. 이력의 host, user 필드는 그대로다.
+func (l *Log) SetRedact(opt redact.Options) {
+	l.redact = opt
+}
+
 // Append는 구조화 로그에 한 줄을 추가한다. 이력 단계에는 넣지 않는다.
 func (l *Log) Append(e Event) error {
 	return l.write(&e)
@@ -124,7 +133,7 @@ func (l *Log) WriteCollect(name, body string) error {
 		return fmt.Errorf("create collect dir: %w", err)
 	}
 	path := filepath.Join(dir, name)
-	return os.WriteFile(path, []byte(scrub(body)), 0o600) //nolint:gosec // 운영자가 지정한 로그 디렉터리 안의 실행 ID
+	return os.WriteFile(path, []byte(l.scrub(body)), 0o600) //nolint:gosec // 운영자가 지정한 로그 디렉터리 안의 실행 ID
 }
 
 // Close는 구조화 로그 파일을 닫는다.
@@ -144,9 +153,9 @@ func (l *Log) write(e *Event) error {
 	if e.Time.IsZero() {
 		e.Time = time.Now().UTC()
 	}
-	e.Error = scrub(e.Error)
-	e.Stdout = scrub(summarize(e.Stdout))
-	e.Stderr = scrub(summarize(e.Stderr))
+	e.Error = l.scrub(e.Error)
+	e.Stdout = l.scrub(summarize(e.Stdout))
+	e.Stderr = l.scrub(summarize(e.Stderr))
 
 	data, err := json.Marshal(e)
 	if err != nil {
@@ -174,14 +183,12 @@ func summarize(s string) string {
 	return string(runes[:stderrLimit]) + "..."
 }
 
-// Redact는 로그와 프로세스 밖 에러 문장에서 개인키 본문을 가린다.
+// Redact는 로그와 프로세스 밖 에러 문장에서 개인키, IP, 토큰을 가린다.
+// 설정에 적힌 이름은 Log.SetRedact로 붙인다.
 func Redact(s string) string {
-	return scrub(s)
+	return redact.Apply(s, redact.Options{})
 }
 
-func scrub(s string) string {
-	if strings.Contains(s, "PRIVATE KEY") {
-		return "[redacted]"
-	}
-	return s
+func (l *Log) scrub(s string) string {
+	return redact.Apply(s, l.redact)
 }

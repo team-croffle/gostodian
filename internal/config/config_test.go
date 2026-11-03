@@ -191,6 +191,20 @@ func TestFilterRejectsNegativeMax(t *testing.T) {
 	}
 }
 
+func TestRedactRejectsBlankName(t *testing.T) {
+	clearSecretEnv(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cfg.yaml")
+	body := []byte("server:\n  host: h\n  user: u\nssh:\n  identity_file: k\n  known_hosts_file: n\npipeline:\n  redact:\n    hostnames:\n      - \" \"\n")
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "pipeline.redact") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func clearSecretEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("GOSTODIAN_SSH_KEY_FILE", "")
