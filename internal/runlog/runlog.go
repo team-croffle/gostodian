@@ -39,6 +39,7 @@ type Event struct {
 	Class       string    `json:"class,omitempty"`
 	Stdout      string    `json:"stdout,omitempty"`
 	Stderr      string    `json:"stderr,omitempty"`
+	Truncated   bool      `json:"truncated,omitempty"`
 }
 
 // History는 실행 하나의 성공/실패 파일

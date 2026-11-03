@@ -24,3 +24,9 @@ func KnownKind(name string) bool {
 	}
 	return false
 }
+
+// KnownCategory는 필터 규칙에 쓸 수 있는 수집 이름인지 본다.
+// 로그 네 종류와 resources다.
+func KnownCategory(name string) bool {
+	return name == ResourcesVerb || KnownKind(name)
+}

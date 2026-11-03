@@ -73,6 +73,7 @@ cp config/config.yaml.example config/config.yaml
 | `ssh.identity_file` / `known_hosts_file` | SSH 개인키, 홈랩 호스트 키 파일 경로 |
 | `pipeline.docker_order` | 정지 순서. 기동은 역순. 서비스 이름은 코드에 두지 않고 여기에만 둔다 |
 | `pipeline.timeouts.step` / `reboot` | 게이트 호출 1회 제한 시간(기본 10분), 재부팅 뒤 돌아오기까지 제한 시간(기본 15분) |
+| `pipeline.filter` | 종류별 include/exclude, 같은 줄 합치기, 길이 상한. 상한을 비우면 262144글자. 넘치면 본문을 자르고 이력에 남긴다 |
 | `secrets.*_file` | 시크릿 파일 경로. compose의 `GOSTODIAN_*_FILE`이 있으면 그쪽이 우선 |
 | `vpn.interface` | 비어 있으면 VPN 검사를 하지 않는다. 예: `wg0` |
 

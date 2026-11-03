@@ -282,6 +282,67 @@ func TestRunStopStartHistory(t *testing.T) {
 	}
 }
 
+func TestRunCollectFilterTruncates(t *testing.T) {
+	restoreConnect(t)
+	restoreClock(t)
+	silenceNotify(t)
+	boots := 0
+	connect = func(config.Config) runner {
+		return &stubRunner{
+			run: func() (ssh.Result, error) {
+				return ssh.Result{Stdout: "status-ok\n"}, nil
+			},
+			runVerb: func(verb, name string) (ssh.Result, error) {
+				switch verb {
+				case ssh.UpdateStatusVerb:
+					return ssh.Result{Stdout: "done\n"}, nil
+				case ssh.BootIDVerb:
+					boots++
+					if boots == 1 {
+						return ssh.Result{Stdout: "boot-before\n"}, nil
+					}
+					return ssh.Result{Stdout: "boot-after\n"}, nil
+				case ssh.CollectLogsVerb:
+					if name == "dnf" {
+						return ssh.Result{Stdout: "0123456789\n"}, nil
+					}
+					return ssh.Result{Stdout: "ok\n"}, nil
+				default:
+					return ssh.Result{Stdout: "ok\n"}, nil
+				}
+			},
+		}
+	}
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	body := "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: secrets/id_ed25519\n  known_hosts_file: secrets/known_hosts\npipeline:\n  docker_order: []\n  filter:\n    max_runes: 8\nvpn:\n  interface: \"\"\n"
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logDir := t.TempDir()
+	if err := run([]string{"run", "--config", cfgPath, "--log-dir", logDir}, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	var sawDNF, truncated bool
+	for _, step := range readHistory(t, logDir).Steps {
+		if step.Command != "collect-logs dnf" {
+			continue
+		}
+		sawDNF = true
+		truncated = step.Truncated
+	}
+	if !sawDNF || !truncated {
+		t.Fatal("dnf over the cap was not marked truncated")
+	}
+	files := readCollects(t, logDir)
+	if files["dnf"] != "01234567" {
+		t.Fatalf("dnf = %q", files["dnf"])
+	}
+	if files["boot"] != "ok\n" {
+		t.Fatalf("boot = %q", files["boot"])
+	}
+}
+
 func TestRunCollectFailureContinues(t *testing.T) {
 	restoreConnect(t)
 	restoreClock(t)
@@ -1000,12 +1061,13 @@ func TestRunNotifyFailureKeepsCheckResult(t *testing.T) {
 type historyFile struct {
 	Status string `json:"status"`
 	Steps  []struct {
-		Step    string `json:"step"`
-		Status  string `json:"status"`
-		Command string `json:"command"`
-		Class   string `json:"class"`
-		Error   string `json:"error"`
-		Stdout  string `json:"stdout"`
+		Step      string `json:"step"`
+		Status    string `json:"status"`
+		Command   string `json:"command"`
+		Class     string `json:"class"`
+		Error     string `json:"error"`
+		Stdout    string `json:"stdout"`
+		Truncated bool   `json:"truncated"`
 	} `json:"steps"`
 }
 

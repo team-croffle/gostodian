@@ -12,6 +12,7 @@ import (
 	"gostodian/internal/collect"
 	"gostodian/internal/config"
 	"gostodian/internal/discord"
+	"gostodian/internal/filter"
 	"gostodian/internal/pipeline"
 	"gostodian/internal/runlog"
 	"gostodian/internal/ssh"
@@ -257,7 +258,7 @@ func runMaintenance(lg *runlog.Log, cfg config.Config, client runner, stdout, st
 			return errors.Join(collectErr, err)
 		}
 	}
-	if _, err := runGateStep(lg, cfg, client, ssh.HealthVerb, "", ssh.HealthVerb, stdout, stderr); err != nil {
+	if _, err := runGateStep(lg, cfg, client, ssh.HealthVerb, "", ssh.HealthVerb, stdout, stderr, nil); err != nil {
 		return errors.Join(collectErr, err)
 	}
 	return collectErr
@@ -279,12 +280,17 @@ func runCollect(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr
 }
 
 // runCollectOne은 게이트 동사 하나를 이력에 남기고, 성공하면 실행 ID 아래 산출물로 쓴다.
+// 저장하는 본문은 점검 머신 설정의 필터를 거친 것이다.
 func runCollectOne(lg *runlog.Log, cfg config.Config, client runner, verb, name, fileName string, stdout, stderr io.Writer) error {
 	command := verb
 	if name != "" {
 		command = verb + " " + name
 	}
-	result, err := runGateStep(lg, cfg, client, verb, name, command, stdout, stderr)
+	result, err := runGateStep(lg, cfg, client, verb, name, command, stdout, stderr, func(result *ssh.Result) bool {
+		filtered := filter.Apply(fileName, result.Stdout, cfg.Pipeline.Filter)
+		result.Stdout = filtered.Body
+		return filtered.Truncated
+	})
 	if err != nil {
 		return err
 	}
@@ -303,14 +309,14 @@ func runCollectOne(lg *runlog.Log, cfg config.Config, client runner, verb, name,
 }
 
 func runOneService(lg *runlog.Log, cfg config.Config, client runner, verb, name string, stdout, stderr io.Writer) error {
-	_, err := runGateStep(lg, cfg, client, verb, name, verb+" "+name, stdout, stderr)
+	_, err := runGateStep(lg, cfg, client, verb, name, verb+" "+name, stdout, stderr, nil)
 	return err
 }
 
 // runUpdate는 update를 시작한 뒤 update-status로 끝날 때까지 폴링한다.
 // 진행 상태는 이력에 남기고, failed면 그 단계에서 중단한다.
 func runUpdate(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr io.Writer) error {
-	if _, err := runGateStep(lg, cfg, client, ssh.UpdateVerb, "", ssh.UpdateVerb, stdout, stderr); err != nil {
+	if _, err := runGateStep(lg, cfg, client, ssh.UpdateVerb, "", ssh.UpdateVerb, stdout, stderr, nil); err != nil {
 		return err
 	}
 	deadline := nowFunc().Add(timeoutOf(cfg, "step", defaultStepTimeout))
@@ -522,8 +528,12 @@ func readBootID(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr
 	return id, nil
 }
 
-func runGateStep(lg *runlog.Log, cfg config.Config, client runner, verb, name, command string, stdout, stderr io.Writer) (ssh.Result, error) {
+func runGateStep(lg *runlog.Log, cfg config.Config, client runner, verb, name, command string, stdout, stderr io.Writer, prepare func(*ssh.Result) bool) (ssh.Result, error) {
 	result, runErr := runVerbTimed(cfg, client, verb, name)
+	truncated := false
+	if prepare != nil && runErr == nil && result.ExitCode == 0 {
+		truncated = prepare(&result)
+	}
 	if err := writeResult(stdout, stderr, result); err != nil {
 		return result, err
 	}
@@ -542,15 +552,16 @@ func runGateStep(lg *runlog.Log, cfg config.Config, client runner, verb, name, c
 		}
 	}
 	if err := lg.Step(runlog.Event{
-		Step:     verb,
-		Status:   status,
-		Command:  command,
-		Host:     cfg.Server.Host,
-		User:     cfg.Server.User,
-		ExitCode: exitCode,
-		Error:    errText,
-		Stdout:   result.Stdout,
-		Stderr:   result.Stderr,
+		Step:      verb,
+		Status:    status,
+		Command:   command,
+		Host:      cfg.Server.Host,
+		User:      cfg.Server.User,
+		ExitCode:  exitCode,
+		Error:     errText,
+		Stdout:    result.Stdout,
+		Stderr:    result.Stderr,
+		Truncated: truncated,
 	}); err != nil {
 		return result, err
 	}

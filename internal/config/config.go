@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"gostodian/internal/collect"
 )
 
 const defaultConfigPath = "config/config.yaml"
@@ -39,6 +41,21 @@ type SSHConfig struct {
 type PipelineConfig struct {
 	DockerOrder []string          `yaml:"docker_order"`
 	Timeouts    map[string]string `yaml:"timeouts"`
+	Filter      FilterConfig      `yaml:"filter"`
+}
+
+// FilterConfig는 점검 머신에서 수집 본문에 적용하는 규칙이다.
+// MaxRunes가 0이면 필터의 기본 상한을 쓴다.
+type FilterConfig struct {
+	MaxRunes   int                      `yaml:"max_runes"`
+	Categories map[string]CategoryRules `yaml:"categories"`
+}
+
+// CategoryRules는 한 종류의 줄 선택 규칙이다.
+// Include가 비어 있으면 모든 줄이 후보가 되고, Exclude에 걸리면 빠진다.
+type CategoryRules struct {
+	Include []string `yaml:"include"`
+	Exclude []string `yaml:"exclude"`
 }
 
 // VPNConfig는 접속 전에 확인할 인터페이스 이름만 가진다.
@@ -135,6 +152,33 @@ func Validate(cfg Config) error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required config: %s", strings.Join(missing, ", "))
+	}
+	return validateFilter(cfg.Pipeline.Filter)
+}
+
+func validateFilter(f FilterConfig) error {
+	if f.MaxRunes < 0 {
+		return errors.New("invalid config: pipeline.filter.max_runes")
+	}
+	for name, rules := range f.Categories {
+		if !collect.KnownCategory(name) {
+			return fmt.Errorf("invalid config: pipeline.filter.categories.%s", name)
+		}
+		if err := validatePatterns(name, rules.Include); err != nil {
+			return err
+		}
+		if err := validatePatterns(name, rules.Exclude); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validatePatterns(category string, patterns []string) error {
+	for _, pattern := range patterns {
+		if strings.TrimSpace(pattern) == "" || strings.ContainsAny(pattern, "\r\n") {
+			return fmt.Errorf("invalid config: pipeline.filter.categories.%s", category)
+		}
 	}
 	return nil
 }
