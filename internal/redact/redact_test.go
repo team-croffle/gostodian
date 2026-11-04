@@ -14,7 +14,7 @@ func TestGoldenSecureHidesIdentifiers(t *testing.T) {
 	if got != want {
 		t.Fatalf("got = %q\nwant %q", got, want)
 	}
-	for _, secret := range []string{"lab-host", "ada", "203.0.113.10", "2001:db8::1", "abcdEFGH12345678", "secrettoken", "abcdefghijklmnop"} {
+	for _, secret := range []string{"lab-host", "ada", "203.0.113.10", "2001:db8::1", "example-test-token", "secrettoken", "abcdefghijklmnop"} {
 		if strings.Contains(got, secret) {
 			t.Fatalf("left %q in %q", secret, got)
 		}

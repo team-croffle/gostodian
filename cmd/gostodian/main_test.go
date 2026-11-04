@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -427,7 +426,7 @@ func TestRunCollectJudgmentUsesExecutionID(t *testing.T) {
 						return ssh.Result{Stdout: "Failed password for [account]\nok\n"}, nil
 					}
 					if name == "dnf" {
-						return ssh.Result{}, fmt.Errorf("missing")
+						return ssh.Result{}, errors.New("missing")
 					}
 					return ssh.Result{Stdout: "ok\n"}, nil
 				default:

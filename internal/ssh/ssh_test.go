@@ -123,23 +123,23 @@ func TestGateCommandStopStart(t *testing.T) {
 	if err != nil || got != "start svc-b" {
 		t.Fatalf("start = %q %v", got, err)
 	}
-	if _, err := gateCommand(StopVerb, ""); err == nil {
+	if _, err = gateCommand(StopVerb, ""); err == nil {
 		t.Fatal("empty name")
 	}
-	if _, err := gateCommand(StopVerb, "svc a"); err == nil {
+	if _, err = gateCommand(StopVerb, "svc a"); err == nil {
 		t.Fatal("spaced name")
 	}
-	if _, err := gateCommand(StatusCommand, "svc-a"); err == nil {
+	if _, err = gateCommand(StatusCommand, "svc-a"); err == nil {
 		t.Fatal("status with name")
 	}
 	got, err = gateCommand(CollectLogsVerb, "secure")
 	if err != nil || got != "collect-logs secure" {
 		t.Fatalf("collect-logs = %q %v", got, err)
 	}
-	if _, err := gateCommand(CollectLogsVerb, "nginx"); err == nil {
+	if _, err = gateCommand(CollectLogsVerb, "nginx"); err == nil {
 		t.Fatal("unknown log kind")
 	}
-	if _, err := gateCommand(CollectLogsVerb, ""); err == nil {
+	if _, err = gateCommand(CollectLogsVerb, ""); err == nil {
 		t.Fatal("empty log kind")
 	}
 	got, err = gateCommand(ResourcesVerb, "")
