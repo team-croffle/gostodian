@@ -32,6 +32,18 @@ pipeline:
   # 센 줄이 0이면 이상 없음. 종류를 비우면 그 종류도 이상 없음.
   rules: {}
 
+# 보고서 초안(AI). 코드에 제공자 이름을 두지 않는다.
+# api_url은 OpenAI 호환 Chat Completions base다. 운영에서 Claude 쪽으로 둔다.
+# 예: Anthropic OpenAI 호환 base. 실제 주소·모델은 점검 머신에서만 채운다.
+report:
+  api_url: https://api.anthropic.com/v1
+  model: claude-sonnet-4-20250514
+  template_file: templates/report_template.md
+  timeout: 120s
+  max_input_runes: 48000
+  max_output_tokens: 8192
+  template_hash_file: logs/report_template.sha256
+
 # 경로는 compose의 GOSTODIAN_*_FILE 이 있으면 그쪽이 이긴다.
 secrets:
   ai_api_key_file: secrets/ai_api_key
