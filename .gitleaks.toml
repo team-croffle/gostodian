@@ -1,0 +1,9 @@
+# Fake tokens in redact golden fixtures are intentional test input.
+# gitleaks scans full git history, so path allowlist is required.
+title = "gostodian"
+
+[allowlist]
+description = "redact package golden fixtures use synthetic secrets"
+paths = [
+  '''(^|/)internal/redact/testdata/''',
+]

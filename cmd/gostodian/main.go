@@ -326,7 +326,7 @@ func runCollectOne(lg *runlog.Log, cfg config.Config, client runner, verb, name,
 func recordJudgment(lg *runlog.Log, cfg config.Config, bodies map[string]string) error {
 	categories := append(collect.LogKinds(), collect.ResourcesVerb)
 	items := make([]judge.Result, 0, len(categories))
-	var lines []string
+	lines := make([]string, 0, len(categories))
 	for _, category := range categories {
 		body, ok := bodies[category]
 		item := judge.Evaluate(category, body, cfg.Pipeline.Rules[category], ok)

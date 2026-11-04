@@ -1,5 +1,5 @@
 Aug  2 18:51:00 lab-host sshd-session[166]: Failed password for user ada from 203.0.113.10 port 22
 Aug  2 18:51:01 lab-host sshd-session[166]: Accepted publickey for ada from 2001:db8::1 port 22
-Aug  2 18:51:02 lab-host sudo[1]: ada : USER=root ; token=abcdEFGH12345678
+Aug  2 18:51:02 lab-host sudo[1]: ada : USER=root ; token=example-test-token
 https://discord.com/api/webhooks/1/secrettoken
 Bearer abcdefghijklmnop

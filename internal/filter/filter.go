@@ -24,9 +24,9 @@ type Outcome struct {
 // Apply는 category 규칙으로 body를 거른다.
 // 규칙이 없고 중복도 없으면 본문은 그대로다. 상한을 넘으면 앞에서 자른다.
 func Apply(category, body string, rules config.FilterConfig) Outcome {
-	max := rules.MaxRunes
-	if max == 0 {
-		max = DefaultMaxRunes
+	maxRunes := rules.MaxRunes
+	if maxRunes == 0 {
+		maxRunes = DefaultMaxRunes
 	}
 	cat := rules.Categories[category]
 	lines := splitLines(body)
@@ -37,8 +37,8 @@ func Apply(category, body string, rules config.FilterConfig) Outcome {
 	}
 	runes := []rune(out)
 	truncated := false
-	if len(runes) > max {
-		out = string(runes[:max])
+	if len(runes) > maxRunes {
+		out = string(runes[:maxRunes])
 		truncated = true
 	}
 	return Outcome{Body: out, Truncated: truncated}
