@@ -1,5 +1,5 @@
 // Package filter는 점검 머신에서 수집 본문의 중복 줄을 합친다.
-// 같은 fingerprint의 줄을 하나로 모으고, 길이 상한을 적용한다. 단어로 줄을 빼지 않는다.
+// 같은 fingerprint의 줄을 하나로 모으고, 길이 상한을 적용한다.
 package filter
 
 import (

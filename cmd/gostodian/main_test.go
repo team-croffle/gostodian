@@ -441,7 +441,7 @@ func TestRunCollectJudgmentUsesExecutionID(t *testing.T) {
 	}
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")
-	body := "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: secrets/id_ed25519\n  known_hosts_file: secrets/known_hosts\npipeline:\n  docker_order: []\n  rules:\n    secure:\n      - Failed password\n    boot: []\nvpn:\n  interface: \"\"\n"
+	body := "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: secrets/id_ed25519\n  known_hosts_file: secrets/known_hosts\npipeline:\n  docker_order: []\nvpn:\n  interface: \"\"\n"
 	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -1295,15 +1295,20 @@ func TestRunUploadsAfterHealth(t *testing.T) {
 	}
 	joined := strings.Join(paths, "\n")
 	id := history.ExecutionID
+	reportKey := "/lab/gostodian/reports/" + id + ".md"
+	if !strings.Contains(joined, reportKey) {
+		t.Fatalf("missing %s in %s", reportKey, joined)
+	}
 	for _, part := range []string{
-		"/lab/gostodian/reports/" + id + ".md",
-		"/lab/gostodian/logs/" + id + ".json",
-		"/lab/gostodian/logs/" + id + ".jsonl",
-		"/lab/gostodian/collects/" + id + "/dnf",
+		"/lab/gostodian/logs/",
+		"/lab/gostodian/collects/",
 	} {
-		if !strings.Contains(joined, part) {
-			t.Fatalf("missing %s in %s", part, joined)
+		if strings.Contains(joined, part) {
+			t.Fatalf("uploaded %s in %s", part, joined)
 		}
+	}
+	if len(paths) != 1 {
+		t.Fatalf("paths = %v", paths)
 	}
 	if _, err := os.Stat(filepath.Join(logDir, "reports", id+".md")); err != nil {
 		t.Fatal(err)

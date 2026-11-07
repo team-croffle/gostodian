@@ -11,14 +11,7 @@ import (
 
 func TestGoldenSecureMergesDuplicateAndKeepsOtherLines(t *testing.T) {
 	in := readFixture(t, "golden_secure.in")
-	got := Apply("secure", in, config.FilterConfig{
-		Categories: map[string]config.CategoryRules{
-			"secure": {
-				Include: []string{"Failed password"},
-				Exclude: []string{"10.0.0.2"},
-			},
-		},
-	})
+	got := Apply("secure", in, config.FilterConfig{})
 	if got.Truncated {
 		t.Fatal("golden fixture was truncated")
 	}
@@ -37,21 +30,6 @@ func TestDuplicateLinesRecordIndexesAndFingerprint(t *testing.T) {
 	}
 }
 
-func TestWordsDoNotDropLines(t *testing.T) {
-	const body = "keep this\ndrop this\n"
-	got := Apply("dnf", body, config.FilterConfig{
-		Categories: map[string]config.CategoryRules{
-			"dnf": {
-				Include: []string{"keep"},
-				Exclude: []string{"drop"},
-			},
-		},
-	})
-	if got.Body != body || got.Truncated {
-		t.Fatalf("got = %+v", got)
-	}
-}
-
 func TestUnconfiguredBodyStaysIntact(t *testing.T) {
 	const body = "collect-logs dnf\n"
 	got := Apply("dnf", body, config.FilterConfig{})
@@ -64,18 +42,6 @@ func TestMaxRunesCutsAndMarksTruncation(t *testing.T) {
 	got := Apply("resources", "0123456789\n", config.FilterConfig{MaxRunes: 4})
 	if got.Body != "0123" || !got.Truncated {
 		t.Fatalf("got = %+v", got)
-	}
-}
-
-func TestOtherCategoryRulesDoNotApply(t *testing.T) {
-	const body = "keep\n"
-	got := Apply("boot", body, config.FilterConfig{
-		Categories: map[string]config.CategoryRules{
-			"secure": {Exclude: []string{"keep"}},
-		},
-	})
-	if got.Body != body {
-		t.Fatalf("body = %q", got.Body)
 	}
 }
 

@@ -13,9 +13,9 @@ const (
 	// SecretAIAPIKey는 보고서 호출 키 이름이다.
 	SecretAIAPIKey = "AI_API_KEY"
 	// SecretS3AccessKey는 객체 저장소 접근 키 이름이다.
-	SecretS3AccessKey = "S3_ACCESS_KEY"
+	SecretS3AccessKey = "S3_ACCESS_KEY" //nolint:gosec // 시크릿 파일의 키 이름. 값 본문이 아님
 	// SecretS3SecretKey는 객체 저장소 비밀 키 이름이다.
-	SecretS3SecretKey = "S3_SECRET_KEY"
+	SecretS3SecretKey = "S3_SECRET_KEY" //nolint:gosec // 시크릿 파일의 키 이름. 값 본문이 아님
 	// SecretDiscordWebhook은 Discord 웹훅 주소 이름이다.
 	SecretDiscordWebhook = "DISCORD_WEBHOOK"
 )

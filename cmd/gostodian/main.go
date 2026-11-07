@@ -220,7 +220,7 @@ func runSub(args []string, stdout, stderr io.Writer) error {
 	var uploaded string
 	var uploadErr error
 	if healthOK {
-		uploaded, uploadErr = uploadRun(lg, cfg, reportPath, maintErr == nil)
+		uploaded, uploadErr = uploadRun(lg, cfg, reportPath)
 	}
 	noteErr := deliverFollowup(lg, cfg, healthOK, maintErr, uploadErr, reportPath, uploaded, rejections)
 	status := "ok"
@@ -926,7 +926,7 @@ func readTrimmed(path string) string {
 	return strings.TrimSpace(string(b))
 }
 
-func uploadRun(lg *runlog.Log, cfg config.Config, reportPath string, maintOK bool) (string, error) {
+func uploadRun(lg *runlog.Log, cfg config.Config, reportPath string) (string, error) {
 	if strings.TrimSpace(cfg.S3.Endpoint) == "" || strings.TrimSpace(cfg.S3.Bucket) == "" {
 		return "", nil
 	}
@@ -938,11 +938,7 @@ func uploadRun(lg *runlog.Log, cfg config.Config, reportPath string, maintOK boo
 	if err != nil || secret == "" {
 		return "", recordUpload(lg, cfg, "failed", "s3 key")
 	}
-	status := "failed"
-	if maintOK {
-		status = "ok"
-	}
-	objects, err := uploadObjects(lg, reportPath, status)
+	body, err := os.ReadFile(reportPath) //nolint:gosec // 이 실행이 방금 쓴 보고서
 	if err != nil {
 		return "", recordUpload(lg, cfg, "failed", "s3 object")
 	}
@@ -955,7 +951,10 @@ func uploadRun(lg *runlog.Log, cfg config.Config, reportPath string, maintOK boo
 		Region:    cfg.S3.Region,
 		AccessKey: access,
 		SecretKey: secret,
-	}, objects); err != nil {
+	}, []s3.Object{{
+		Key:  "reports/" + lg.ID() + ".md",
+		Body: body,
+	}}); err != nil {
 		msg := err.Error()
 		if strings.Contains(msg, access) || strings.Contains(msg, secret) {
 			msg = "s3 put"
@@ -963,49 +962,6 @@ func uploadRun(lg *runlog.Log, cfg config.Config, reportPath string, maintOK boo
 		return "", recordUpload(lg, cfg, "failed", msg)
 	}
 	return cfg.S3.Bucket + "/" + prefixedKey(cfg.S3.Prefix, "reports/"+lg.ID()+".md"), recordUpload(lg, cfg, "ok", "")
-}
-
-func uploadObjects(lg *runlog.Log, reportPath, status string) ([]s3.Object, error) {
-	var objects []s3.Object
-	if reportPath != "" {
-		body, err := os.ReadFile(reportPath) //nolint:gosec // 이 실행이 방금 쓴 보고서
-		if err != nil {
-			return nil, err
-		}
-		objects = append(objects, s3.Object{Key: "reports/" + lg.ID() + ".md", Body: body})
-	}
-	if err := lg.Sync(); err != nil {
-		return nil, err
-	}
-	jsonl, err := os.ReadFile(filepath.Join(lg.Dir(), lg.ID()+".jsonl")) //nolint:gosec // 이 실행의 로그 디렉터리
-	if err != nil {
-		return nil, err
-	}
-	objects = append(objects, s3.Object{Key: "logs/" + lg.ID() + ".jsonl", Body: jsonl})
-	snap, err := lg.Snapshot(status)
-	if err != nil {
-		return nil, err
-	}
-	objects = append(objects, s3.Object{Key: "logs/" + lg.ID() + ".json", Body: snap})
-	collectDir := filepath.Join(lg.Dir(), "collects", lg.ID())
-	entries, err := os.ReadDir(collectDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return objects, nil
-		}
-		return nil, err
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		body, err := os.ReadFile(filepath.Join(collectDir, entry.Name())) //nolint:gosec // 이 실행의 수집 파일
-		if err != nil {
-			return nil, err
-		}
-		objects = append(objects, s3.Object{Key: "collects/" + lg.ID() + "/" + entry.Name(), Body: body})
-	}
-	return objects, nil
 }
 
 func prefixedKey(prefix, key string) string {

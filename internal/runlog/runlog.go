@@ -109,22 +109,6 @@ func (l *Log) Judgments() []Judgment {
 	return out
 }
 
-// Snapshot은 지금까지의 단계로 성공/실패 파일과 같은 JSON을 만든다.
-// 업로드 단계는 이 스냅샷 뒤에 로컬 이력에만 붙는다.
-func (l *Log) Snapshot(status string) ([]byte, error) {
-	history := History{
-		ExecutionID: l.id,
-		Status:      status,
-		Steps:       l.steps,
-		Judgments:   l.judgments,
-	}
-	data, err := json.MarshalIndent(history, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return append(data, '\n'), nil
-}
-
 // Sync는 구조화 로그를 디스크에 반영한다.
 func (l *Log) Sync() error {
 	if l.file == nil {
