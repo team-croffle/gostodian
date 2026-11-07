@@ -208,7 +208,7 @@ func applyDefaults(cfg *Config) {
 		cfg.Report.TemplateFile = "templates/report_template.md"
 	}
 	if strings.TrimSpace(cfg.Report.Timeout) == "" {
-		cfg.Report.Timeout = "120s"
+		cfg.Report.Timeout = "10m"
 	}
 	if cfg.Report.MaxInputRunes == 0 {
 		cfg.Report.MaxInputRunes = 48000

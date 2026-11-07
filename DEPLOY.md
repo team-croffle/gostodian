@@ -37,7 +37,7 @@ cp config/config.yaml.example config/config.yaml
 | `pipeline.rules` | 실행 중 단어로 판정하지 않는다. 판정은 로그를 본 모델이 적는다 |
 | `report.api_url` / `model` | OpenAI 호환 Chat Completions base와 모델. 예시 값은 Claude 쪽이다. 제공자 이름은 코드에 없다 |
 | `report.template_file` | 보고서 뼈대. 기본 `templates/report_template.md` |
-| `report.timeout` | AI 호출 제한 시간. 기본 120초 |
+| `report.timeout` | AI 호출 제한 시간. 기본 10분 |
 | `report.max_input_runes` | AI에 넣는 수집 본문의 글자 상한. 기본 48000 |
 | `report.max_output_tokens` | 응답 토큰 상한. 기본 8192 |
 | `report.template_hash_file` | 직전 템플릿 해시. 기본 `logs/report_template.sha256` |

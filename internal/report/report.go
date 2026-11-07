@@ -116,7 +116,7 @@ func complete(d Draft, logs map[string]string, sum string, changed bool) (string
 	}
 	timeout := d.Timeout
 	if timeout <= 0 {
-		timeout = 120 * time.Second
+		timeout = 10 * time.Minute
 	}
 	body, err := userContent(d, logs, sum, changed)
 	if err != nil {

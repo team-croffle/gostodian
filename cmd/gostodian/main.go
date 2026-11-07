@@ -906,7 +906,7 @@ func writeReportFile(dir, id, body string) (string, error) {
 func reportTimeout(cfg config.Config) time.Duration {
 	d, err := time.ParseDuration(strings.TrimSpace(cfg.Report.Timeout))
 	if err != nil || d <= 0 {
-		return 120 * time.Second
+		return 10 * time.Minute
 	}
 	return d
 }
