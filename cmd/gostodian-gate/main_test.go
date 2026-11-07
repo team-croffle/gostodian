@@ -159,7 +159,7 @@ func TestSudoArgvMatchesSudoersSpec(t *testing.T) {
 	if err != nil || strings.Join(argv, " ") != "sudo -n "+svcHelper+" reboot" {
 		t.Fatalf("reboot = %#v %v", argv, err)
 	}
-	for _, kind := range []string{"dnf", "boot", "secure", "fail2ban"} {
+	for _, kind := range []string{"dnf", "boot", "secure", "fail2ban", "audit"} {
 		argv, err = sudoArgv("collect-logs", kind)
 		if err != nil || strings.Join(argv, " ") != "sudo -n "+svcHelper+" collect-logs "+kind {
 			t.Fatalf("collect-logs %s = %#v %v", kind, argv, err)
@@ -362,7 +362,7 @@ func TestHandleCollectLogs(t *testing.T) {
 		got = append(got, verb+" "+name)
 		return []byte("body\n"), nil
 	}
-	for _, kind := range []string{"dnf", "boot", "secure", "fail2ban"} {
+	for _, kind := range []string{"dnf", "boot", "secure", "fail2ban", "audit"} {
 		text, err := handle("collect-logs "+kind, nil, func(string) ([]byte, error) {
 			t.Fatal("status check")
 			return nil, nil
@@ -371,7 +371,7 @@ func TestHandleCollectLogs(t *testing.T) {
 			t.Fatalf("%s: %q %v", kind, text, err)
 		}
 	}
-	if strings.Join(got, ",") != "collect-logs dnf,collect-logs boot,collect-logs secure,collect-logs fail2ban" {
+	if strings.Join(got, ",") != "collect-logs dnf,collect-logs boot,collect-logs secure,collect-logs fail2ban,collect-logs audit" {
 		t.Fatalf("got = %v", got)
 	}
 }

@@ -200,8 +200,8 @@ func TestRunCallsSSH(t *testing.T) {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	history := readHistory(t, logDir)
-	// status + update + update-status + boot-id + reboot + reconnect + 로그 4 + resources + judge + health + report
-	if history.Status != "ok" || len(history.Steps) != 14 || history.Steps[0].Command != ssh.StatusCommand || history.Steps[0].Stdout != "ok" {
+	// status + update + update-status + boot-id + reboot + reconnect + 로그 5 + resources + judge + health + report
+	if history.Status != "ok" || len(history.Steps) != 15 || history.Steps[0].Command != ssh.StatusCommand || history.Steps[0].Stdout != "ok" {
 		t.Fatalf("history = %+v", history)
 	}
 	health := history.Steps[len(history.Steps)-2]
@@ -257,15 +257,15 @@ func TestRunStopStartHistory(t *testing.T) {
 	if err := run([]string{"run", "--config", cfgPath, "--log-dir", logDir}, &stdout, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	wantGot := "stop svc-a,stop svc-b,update,update-status,boot-id,reboot,boot-id,collect-logs dnf,collect-logs boot,collect-logs secure,collect-logs fail2ban,resources,start svc-b,start svc-a,health"
+	wantGot := "stop svc-a,stop svc-b,update,update-status,boot-id,reboot,boot-id,collect-logs dnf,collect-logs boot,collect-logs secure,collect-logs fail2ban,collect-logs audit,resources,start svc-b,start svc-a,health"
 	if strings.Join(got, ",") != wantGot {
 		t.Fatalf("got = %v", got)
 	}
 	history := readHistory(t, logDir)
-	if history.Status != "ok" || len(history.Steps) != 18 {
+	if history.Status != "ok" || len(history.Steps) != 19 {
 		t.Fatalf("history = %+v", history)
 	}
-	want := []string{"status", "stop svc-a", "stop svc-b", "update", "update-status", "boot-id", "reboot", "boot-id", "collect-logs dnf", "collect-logs boot", "collect-logs secure", "collect-logs fail2ban", "resources", "judge", "start svc-b", "start svc-a", "health"}
+	want := []string{"status", "stop svc-a", "stop svc-b", "update", "update-status", "boot-id", "reboot", "boot-id", "collect-logs dnf", "collect-logs boot", "collect-logs secure", "collect-logs fail2ban", "collect-logs audit", "resources", "judge", "start svc-b", "start svc-a", "health"}
 	for i, command := range want {
 		if history.Steps[i].Command != command || history.Steps[i].Status != "ok" {
 			t.Fatalf("step %d = %+v", i, history.Steps[i])
@@ -450,7 +450,7 @@ func TestRunCollectJudgmentUsesExecutionID(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	history := readHistory(t, logDir)
-	if history.ExecutionID == "" || len(history.Judgments) != 5 {
+	if history.ExecutionID == "" || len(history.Judgments) != 6 {
 		t.Fatalf("history = %+v", history)
 	}
 	got := map[string]string{}

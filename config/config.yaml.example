@@ -20,9 +20,29 @@ pipeline:
   # 수집 본문은 점검 머신에서 거른 뒤 저장한다.
   # include가 있으면 그 문자열을 포함한 줄만 남긴다. exclude에 걸리면 뺀다.
   # max_runes를 비우면 262144글자다. 넘치면 본문을 자르고 이력에 truncated를 남긴다.
+  # 아래 include/exclude는 Raw_Log를 보고 넣은 테스트용 단어다.
+  # include가 있으면 그 중 하나를 포함한 줄만 남고, exclude에 걸리면 빠진다.
   filter:
     max_runes: 262144
-    categories: {}
+    categories:
+      dnf:
+        include: ["INFO", "WARNING", "ERROR"]
+        exclude: ["DDEBUG", "timer:"]
+      boot:
+        include: ["FAILED", "ERROR", "Stopped"]
+        exclude: [" OK "]
+      secure:
+        include: ["Failed", "Invalid", "Accepted", "ROOT LOGIN"]
+        exclude: ["session opened", "session closed", "Disconnected"]
+      fail2ban:
+        include: ["Ban", "ERROR", "WARNING"]
+        exclude: ["Starting", "Jail '"]
+      audit:
+        include: ["USER_AUTH", "USER_LOGIN", "USER_CMD", "ANOM", "res=failed"]
+        exclude: ["PROCTITLE", "type=SYSCALL", "type=SERVICE_START"]
+      resources:
+        include: ["RAM", "CPU", "Storage"]
+        exclude: ["tmpfs"]
   # 본문에 나온 호스트명, IP, 계정, 토큰을 가린다.
   # server.host와 server.user는 여기 없어도 가린다. 이력의 host, user 필드는 남긴다.
   redact:

@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"gostodian/internal/collect"
 	"gostodian/internal/judge"
 )
 
@@ -236,7 +237,7 @@ func fillLocal(template string, d Draft, logs map[string]string) string {
 	if len(logs) == 0 {
 		b.WriteString("  - 없음\n")
 	}
-	for _, name := range []string{"dnf", "boot", "secure", "fail2ban", "resources"} {
+	for _, name := range append(collect.LogKinds(), collect.ResourcesVerb) {
 		body, ok := logs[name]
 		if !ok {
 			continue
@@ -301,7 +302,7 @@ func limitLogs(logs map[string]string, maxRunes int) (map[string]string, []strin
 	if maxRunes <= 0 {
 		maxRunes = 48000
 	}
-	order := []string{"dnf", "boot", "secure", "fail2ban", "resources"}
+	order := append(collect.LogKinds(), collect.ResourcesVerb)
 	present := make([]string, 0, len(order))
 	total := 0
 	for _, name := range order {

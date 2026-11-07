@@ -12,7 +12,7 @@ const (
 
 // LogKinds는 수집하는 로그 종류다. 순서는 재부팅 뒤에 읽는 순서다.
 func LogKinds() []string {
-	return []string{"dnf", "boot", "secure", "fail2ban"}
+	return []string{"dnf", "boot", "secure", "fail2ban", "audit"}
 }
 
 // KnownKind는 종류가 고정 목록과 정확히 같은지 본다.
@@ -26,7 +26,7 @@ func KnownKind(name string) bool {
 }
 
 // KnownCategory는 필터 규칙에 쓸 수 있는 수집 이름인지 본다.
-// 로그 네 종류와 resources다.
+// 로그 종류와 resources다.
 func KnownCategory(name string) bool {
 	return name == ResourcesVerb || KnownKind(name)
 }
