@@ -29,7 +29,7 @@
 | `health` | `/usr/local/libexec/gostodian-svc health` | 점검 계정 |
 | `resources` | `/usr/local/libexec/gostodian-svc resources` | 점검 계정 |
 
-`<종류>`는 `dnf`, `boot`, `secure`, `fail2ban` 중 하나다. 여기서 `dnf`는 패키지 갱신 로그의 종류 이름이다. `dnf` 바이너리를 실행하는 인자가 아니다. sudoers에는 종류마다 한 줄씩, 서비스마다 `down` 한 줄과 `start` 한 줄을 올린다. `docker`, `dnf *`, `systemd-run`은 sudoers에 없다. 그 명령은 root로 돈 헬퍼 안에서만 부른다.
+`<종류>`는 `dnf`, `boot`, `secure`, `fail2ban`, `audit` 중 하나다. 여기서 `dnf`는 패키지 갱신 로그의 종류 이름이다. `dnf` 바이너리를 실행하는 인자가 아니다. sudoers에는 종류마다 한 줄씩, 서비스마다 `down` 한 줄과 `start` 한 줄을 올린다. `docker`, `dnf *`, `systemd-run`은 sudoers에 없다. 그 명령은 root로 돈 헬퍼 안에서만 부른다.
 
 `sudo -n`은 비밀번호를 묻지 않는다. sudoers와 인자가 한 글자라도 다르면 sudo가 실패하고, 그 단계는 점검 머신에서 실패다.
 
@@ -119,6 +119,7 @@ sudoers에는 `systemd-run`과 `dnf`가 없고, 이 헬퍼의 `update` 한 줄�
 | `boot` | `/var/log/boot.log`와 `boot.log-날짜` 회전본 |
 | `secure` | `/var/log/secure`와 `secure-날짜` 회전본 |
 | `fail2ban` | `/var/log/fail2ban.log`와 `fail2ban.log-날짜` 회전본 |
+| `audit` | `/var/log/audit/audit.log`와 그 회전본 |
 
 회전본 파일 이름의 날짜는 그 파일이 닫힌 날이다. 내용의 첫 시각은 그보다 앞일 수 있다. 헬퍼는 날짜로 줄을 잘라내지 않고, 있는 파일 전체를 읽는다.
 
@@ -195,7 +196,7 @@ case "${1-}" in
     ;;
   collect-logs)
     case "$name" in
-      dnf|boot|secure|fail2ban) ;;
+      dnf|boot|secure|fail2ban|audit) ;;
       *) exit 1 ;;
     esac
     # 그 종류 파일을 오래된 순으로 stdout 에 이어 붙인다
@@ -223,7 +224,7 @@ esac
 3. `update-status`를 `done` 또는 `failed`가 나올 때까지
 4. `reboot`
 5. 재접속은 게이트의 `boot-id`. 헬퍼를 부르지 않는다
-6. `collect-logs dnf`, `collect-logs boot`, `collect-logs secure`, `collect-logs fail2ban`, `resources`
+6. `collect-logs dnf`, `collect-logs boot`, `collect-logs secure`, `collect-logs fail2ban`, `collect-logs audit`, `resources`
 7. `start <서비스>`를 역순으로
 8. `health`
 

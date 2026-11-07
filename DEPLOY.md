@@ -149,6 +149,7 @@ docker compose run --rm gostodian run --log-dir /var/lib/gostodian
    gostodian ALL=(root) NOPASSWD: /usr/local/libexec/gostodian-svc collect-logs boot
    gostodian ALL=(root) NOPASSWD: /usr/local/libexec/gostodian-svc collect-logs secure
    gostodian ALL=(root) NOPASSWD: /usr/local/libexec/gostodian-svc collect-logs fail2ban
+   gostodian ALL=(root) NOPASSWD: /usr/local/libexec/gostodian-svc collect-logs audit
    ```
 
    `update-status`, `health`, `resources`는 sudo 없이 헬퍼를 부른다. `update`는 헬퍼 안에서 `dnf -y update`를 일회성 작업으로 돌린다. `collect-logs` 뒤의 `dnf`는 패키지 갱신 로그의 종류 이름이다.
@@ -177,7 +178,7 @@ Discord 웹훅 파일은 점검 머신에만 둔다. 알림 문장에 웹훅 주
 4. `docker_order` 순서로 서비스를 멈춘다.
 5. `update`를 시작하고 `update-status`가 `done` 또는 `failed`가 될 때까지 본다.
 6. `boot_id`를 저장하고 `reboot`를 호출한다. `timeouts.reboot` 안에 `boot_id`가 바뀌면 재접속으로 본다.
-7. `dnf`, `boot`, `secure`, `fail2ban`과 RAM, CPU, Storage를 읽는다. 한 종류가 실패해도 나머지 수집과 이후 기동은 이어간다.
+7. `dnf`, `boot`, `secure`, `fail2ban`, `audit`과 RAM, CPU, Storage를 읽는다. 한 종류가 실패해도 나머지 수집과 이후 기동은 이어간다.
 8. 수집 본문을 거르고 가린 뒤 규칙으로 판정한다. 맞은 줄이 0이면 「이상 없음」, 하나 이상이면 「이상 있음」, 수집이 없으면 「수집 없음」이다.
 9. `docker_order`의 역순으로 서비스를 켜고 `health`를 본다.
 10. `templates/report_template.md` 형식으로 보고서를 쓴다. 템플릿이 바뀌었거나 첫 실행이면 AI 요청에 템플릿 전문을 넣는다. 같으면 같은 형식으로 쓰라고만 한다. AI가 실패하면 같은 템플릿에 실행 ID, 판정, 수집 요약만 채워 남긴다. AI가 돌려준 글은 실행하지 않는다.
@@ -192,7 +193,7 @@ Discord 웹훅 파일은 점검 머신에만 둔다. 알림 문장에 웹훅 주
 |---|---|
 | `logs/<실행ID>.jsonl` | 단계가 끝날 때마다 붙는 이력 |
 | `logs/<실행ID>.json` | 끝난 뒤의 상태, 단계, 종류별 판정 |
-| `logs/collects/<실행ID>/` | 종류별 수집 본문. `dnf`, `boot`, `secure`, `fail2ban`, `resources` |
+| `logs/collects/<실행ID>/` | 종류별 수집 본문. `dnf`, `boot`, `secure`, `fail2ban`, `audit`, `resources` |
 | `logs/reports/<실행ID>.md` | 보고서 |
 | `logs/report_template.sha256` | 직전 보고서 템플릿의 해시 |
 

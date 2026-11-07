@@ -35,7 +35,7 @@
 4. `pipeline.docker_order` 순서로 서비스를 멈춘다. 헬퍼에서는 `down`으로 실행해, 재부팅 뒤에 서비스가 스스로 올라오지 않게 한다.
 5. `update`를 시작하고 `update-status`가 `done` 또는 `failed`가 될 때까지 본다.
 6. 재부팅 전 `boot_id`(부팅마다 바뀌는 값)를 저장하고 `reboot`를 호출한다. 지수 백오프(기다리는 시간을 늘려 가며 다시 접속)로 재접속한 뒤, `timeouts.reboot` 안에 `boot_id`가 바뀌었는지 확인한다.
-7. `collect-logs`로 로그 종류 `dnf`, `boot`, `secure`, `fail2ban`을 읽고, `resources`로 RAM, CPU, Storage를 읽는다. 결과는 이력과 `logs/collects/<실행ID>/`에 남는다. 한 건이 실패해도 나머지 수집과 이후 기동은 이어가고, 빠진 항목은 실패로 기록한다.
+7. `collect-logs`로 로그 종류 `dnf`, `boot`, `secure`, `fail2ban`, `audit`을 읽고, `resources`로 RAM, CPU, Storage를 읽는다. 결과는 이력과 `logs/collects/<실행ID>/`에 남는다. 한 건이 실패해도 나머지 수집과 이후 기동은 이어가고, 빠진 항목은 실패로 기록한다.
 8. 수집한 글을 카테고리 규칙으로 거르고, 리댁션(호스트명, IP, 계정, 토큰을 가림)한 뒤 규칙으로 이상 여부를 판정한다. 매칭이 0건인 카테고리는 「이상 없음」이다.
 9. `docker_order`의 역순으로 서비스를 켜고 `health`로 컨테이너와 포트 Listening(접속을 받는 상태)을 본다.
 10. 실행 ID로 보고서 초안을 만든다. 로그는 구조화된 필드로 넣고 경계를 명시한다. AI 호출이 실패하면 고정 템플릿으로 보고서를 쓴다. LLM 출력은 실행하지 않는다.
@@ -135,6 +135,7 @@ ssh-keyscan -t ed25519 <홈랩호스트> >> secrets/known_hosts
    gostodian ALL=(root) NOPASSWD: /usr/local/libexec/gostodian-svc collect-logs boot
    gostodian ALL=(root) NOPASSWD: /usr/local/libexec/gostodian-svc collect-logs secure
    gostodian ALL=(root) NOPASSWD: /usr/local/libexec/gostodian-svc collect-logs fail2ban
+   gostodian ALL=(root) NOPASSWD: /usr/local/libexec/gostodian-svc collect-logs audit
    ```
 
    `update-status`, `health`, `resources`는 읽기만 하므로 sudo 없이 헬퍼를 부른다. `update` 헬퍼는 내부에서 일회성 작업으로 `dnf -y update`를 돌린다. `collect-logs` 뒤의 `dnf`는 패키지 갱신 로그라는 종류 이름이다. `dnf` 명령 자체는 sudoers에 없다.
@@ -155,7 +156,7 @@ ssh-keyscan -t ed25519 <홈랩호스트> >> secrets/known_hosts
 | `update-status` | 없음 | `running` / `done` / `failed` | 읽기 |
 | `reboot` | 없음 | 헬퍼 `reboot` | sudo 고정 줄 |
 | `health` | 없음 | 컨테이너가 떠 있는지, 포트가 Listening인지 | 읽기 |
-| `collect-logs` | `dnf` `boot` `secure` `fail2ban` 중 하나 | 그 종류의 로그를 읽음 | sudo 고정 줄 |
+| `collect-logs` | `dnf` `boot` `secure` `fail2ban` `audit` 중 하나 | 그 종류의 로그를 읽음 | sudo 고정 줄 |
 | `resources` | 없음 | RAM, CPU, Storage | 읽기 |
 
 ### 실행
