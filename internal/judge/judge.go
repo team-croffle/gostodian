@@ -11,6 +11,8 @@ const (
 	ResultFound = "이상 있음"
 	// ResultMissing은 그 종류 수집이 실패해 판정할 본문이 없을 때다.
 	ResultMissing = "수집 없음"
+	// ResultPending은 수집은 됐으나 모델이 판정을 주지 않았을 때다.
+	ResultPending = "판정 없음"
 )
 
 // Result는 종류 하나의 판정이다.

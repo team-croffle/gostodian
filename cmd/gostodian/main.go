@@ -267,9 +267,6 @@ func runMaintenance(lg *runlog.Log, cfg config.Config, client runner, stdout, st
 		return nil, false, err
 	}
 	bodies, collectErr := runCollect(lg, cfg, client, stdout, stderr)
-	if err := recordJudgment(lg, cfg, bodies); err != nil {
-		return bodies, false, errors.Join(collectErr, err)
-	}
 	for _, name := range pipeline.StartOrder(cfg.Pipeline.DockerOrder) {
 		if err := runOneService(lg, cfg, client, ssh.StartVerb, name, stdout, stderr); err != nil {
 			return bodies, false, errors.Join(collectErr, err)
@@ -332,19 +329,14 @@ func runCollectOne(lg *runlog.Log, cfg config.Config, client runner, verb, name,
 	return result.Stdout, nil
 }
 
-// recordJudgment는 필터와 리댁션을 거친 본문을 종류별 규칙으로 판정하고 실행 ID에 남긴다.
-// 매칭이 없어도 점검을 실패로 만들지 않는다. 수집이 없는 종류는 이상 없음으로 적지 않는다.
-func recordJudgment(lg *runlog.Log, cfg config.Config, bodies map[string]string) error {
-	categories := append(collect.LogKinds(), collect.ResourcesVerb)
-	items := make([]judge.Result, 0, len(categories))
-	lines := make([]string, 0, len(categories))
-	for _, category := range categories {
-		body, ok := bodies[category]
-		item := judge.Evaluate(category, body, cfg.Pipeline.Rules[category], ok)
-		items = append(items, item)
-		lines = append(lines, category+": "+item.Result)
-	}
+// recordModelJudgment는 모델이 로그를 본 뒤 적은 판정을 실행 ID에 남긴다.
+// 수집이 없는 종류는 수집 없음이고, 모델이 줄을 빠뜨리면 판정 없음이다.
+func recordModelJudgment(lg *runlog.Log, cfg config.Config, items []judge.Result) error {
 	lg.SetJudgments(items)
+	lines := make([]string, 0, len(items))
+	for _, item := range items {
+		lines = append(lines, item.Category+": "+item.Result)
+	}
 	return lg.Step(runlog.Event{
 		Step:    "judge",
 		Status:  "ok",
@@ -850,7 +842,6 @@ func writeReport(lg *runlog.Log, cfg config.Config, bodies map[string]string, re
 		PreviousHash:    readTrimmed(templateHashPath(lg.Dir(), cfg.Report.TemplateHashFile)),
 		RunID:           lg.ID(),
 		Logs:            bodies,
-		Judgments:       judgeResults(lg.Judgments()),
 		Rejections:      rejections,
 		MaxInputRunes:   cfg.Report.MaxInputRunes,
 		MaxOutputTokens: cfg.Report.MaxOutputTokens,
@@ -897,6 +888,7 @@ func writeReport(lg *runlog.Log, cfg config.Config, bodies map[string]string, re
 		Error:   errText,
 		Stdout:  stdoutText,
 	})
+	_ = recordModelJudgment(lg, cfg, result.Judgments) //nolint:errcheck // 판정 기록 실패가 보고서 파일보다 우선이지 않다
 	return path
 }
 
@@ -909,14 +901,6 @@ func writeReportFile(dir, id, body string) (string, error) {
 		return "", err
 	}
 	return path, nil
-}
-
-func judgeResults(items []runlog.Judgment) []judge.Result {
-	out := make([]judge.Result, len(items))
-	for i, item := range items {
-		out[i] = judge.Result{Category: item.Category, Result: item.Result, Matches: item.Matches}
-	}
-	return out
 }
 
 func reportTimeout(cfg config.Config) time.Duration {

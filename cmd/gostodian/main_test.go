@@ -200,12 +200,13 @@ func TestRunCallsSSH(t *testing.T) {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	history := readHistory(t, logDir)
-	// status + update + update-status + boot-id + reboot + reconnect + 로그 5 + resources + judge + health + report
+	// status + update + update-status + boot-id + reboot + reconnect + 로그 5 + resources + health + report + judge
 	if history.Status != "ok" || len(history.Steps) != 15 || history.Steps[0].Command != ssh.StatusCommand || history.Steps[0].Stdout != "ok" {
 		t.Fatalf("history = %+v", history)
 	}
-	health := history.Steps[len(history.Steps)-2]
-	if health.Command != ssh.HealthVerb || health.Status != "ok" || history.Steps[len(history.Steps)-1].Command != "report" {
+	report := history.Steps[len(history.Steps)-2]
+	judgeStep := history.Steps[len(history.Steps)-1]
+	if report.Command != "report" || report.Status != "ok" || judgeStep.Command != "judge" || !strings.Contains(judgeStep.Stdout, "판정 없음") {
 		t.Fatalf("tail = %+v", history.Steps[len(history.Steps)-2:])
 	}
 	if strings.Contains(historyText(t, logDir), "id_ed25519") {
@@ -265,7 +266,7 @@ func TestRunStopStartHistory(t *testing.T) {
 	if history.Status != "ok" || len(history.Steps) != 19 {
 		t.Fatalf("history = %+v", history)
 	}
-	want := []string{"status", "stop svc-a", "stop svc-b", "update", "update-status", "boot-id", "reboot", "boot-id", "collect-logs dnf", "collect-logs boot", "collect-logs secure", "collect-logs fail2ban", "collect-logs audit", "resources", "judge", "start svc-b", "start svc-a", "health"}
+	want := []string{"status", "stop svc-a", "stop svc-b", "update", "update-status", "boot-id", "reboot", "boot-id", "collect-logs dnf", "collect-logs boot", "collect-logs secure", "collect-logs fail2ban", "collect-logs audit", "resources", "start svc-b", "start svc-a", "health", "report", "judge"}
 	for i, command := range want {
 		if history.Steps[i].Command != command || history.Steps[i].Status != "ok" {
 			t.Fatalf("step %d = %+v", i, history.Steps[i])
@@ -454,15 +455,10 @@ func TestRunCollectJudgmentUsesExecutionID(t *testing.T) {
 		t.Fatalf("history = %+v", history)
 	}
 	got := map[string]string{}
-	matches := map[string]int{}
 	for _, item := range history.Judgments {
 		got[item.Category] = item.Result
-		matches[item.Category] = item.Matches
 	}
-	if got["secure"] != judge.ResultFound || matches["secure"] != 1 {
-		t.Fatalf("secure = %s %d", got["secure"], matches["secure"])
-	}
-	if got["boot"] != judge.ResultClear || got["dnf"] != judge.ResultMissing {
+	if got["secure"] != judge.ResultPending || got["boot"] != judge.ResultPending || got["dnf"] != judge.ResultMissing {
 		t.Fatalf("judgments = %+v", history.Judgments)
 	}
 	if !strings.Contains(historyText(t, logDir), history.ExecutionID) {

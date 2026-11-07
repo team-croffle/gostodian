@@ -3,14 +3,14 @@ package filter
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gostodian/internal/config"
 )
 
-func TestGoldenSecureKeepsIncludedAndMergesDuplicate(t *testing.T) {
+func TestGoldenSecureMergesDuplicateAndKeepsOtherLines(t *testing.T) {
 	in := readFixture(t, "golden_secure.in")
-	want := readFixture(t, "golden_secure.out")
 	got := Apply("secure", in, config.FilterConfig{
 		Categories: map[string]config.CategoryRules{
 			"secure": {
@@ -22,8 +22,10 @@ func TestGoldenSecureKeepsIncludedAndMergesDuplicate(t *testing.T) {
 	if got.Truncated {
 		t.Fatal("golden fixture was truncated")
 	}
-	if got.Body != want {
-		t.Fatalf("body = %q\nwant %q", got.Body, want)
+	for _, text := range []string{"1,3\t", "Accepted publickey for user", "session opened for user", "10.0.0.2"} {
+		if !strings.Contains(got.Body, text) {
+			t.Fatalf("body = %q", got.Body)
+		}
 	}
 }
 
@@ -35,28 +37,18 @@ func TestDuplicateLinesRecordIndexesAndFingerprint(t *testing.T) {
 	}
 }
 
-func TestExcludeDropsLineWithoutRewritingTheRest(t *testing.T) {
-	got := Apply("dnf", "keep this\ndrop this\n", config.FilterConfig{
+func TestWordsDoNotDropLines(t *testing.T) {
+	const body = "keep this\ndrop this\n"
+	got := Apply("dnf", body, config.FilterConfig{
 		Categories: map[string]config.CategoryRules{
-			"dnf": {Exclude: []string{"drop"}},
-		},
-	})
-	if got.Body != "keep this\n" || got.Truncated {
-		t.Fatalf("got = %+v", got)
-	}
-}
-
-func TestExcludeWinsWhenIncludeAlsoMatches(t *testing.T) {
-	got := Apply("fail2ban", "Failed password drop\nFailed password keep\n", config.FilterConfig{
-		Categories: map[string]config.CategoryRules{
-			"fail2ban": {
-				Include: []string{"Failed password"},
+			"dnf": {
+				Include: []string{"keep"},
 				Exclude: []string{"drop"},
 			},
 		},
 	})
-	if got.Body != "Failed password keep\n" {
-		t.Fatalf("body = %q", got.Body)
+	if got.Body != body || got.Truncated {
+		t.Fatalf("got = %+v", got)
 	}
 }
 

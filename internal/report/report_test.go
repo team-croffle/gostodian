@@ -109,8 +109,11 @@ func TestBuildFallsBackWhenModelFails(t *testing.T) {
 	if got.FromModel {
 		t.Fatal("fallback was marked as a model draft")
 	}
-	if !strings.Contains(got.Markdown, template) || !strings.Contains(got.Markdown, "exec-3") || !strings.Contains(got.Markdown, "이상 있음") {
+	if !strings.Contains(got.Markdown, template) || !strings.Contains(got.Markdown, "exec-3") {
 		t.Fatalf("markdown = %s", got.Markdown)
+	}
+	if len(got.Judgments) != 6 || got.Judgments[2].Category != "secure" || got.Judgments[2].Result != judge.ResultPending {
+		t.Fatalf("judgments = %+v", got.Judgments)
 	}
 	if strings.Contains(got.Markdown, "Failed password") {
 		t.Fatal("local fill copied the log body")
@@ -132,6 +135,32 @@ func TestBuildRejectsUnstructuredModelText(t *testing.T) {
 	})
 	if got.FromModel || !strings.Contains(got.Markdown, "exec-4") {
 		t.Fatalf("result = %+v", got)
+	}
+}
+
+func TestBuildReadsJudgmentSection(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"# 보고서\n\n## 판정\n- dnf: 이상 있음\n- boot: 이상 없음\n"}}]}`)
+	}))
+	t.Cleanup(srv.Close)
+	got := Build(Draft{
+		APIURL:   srv.URL + "/v1",
+		Model:    "m",
+		APIKey:   "k",
+		Timeout:  time.Second,
+		Template: "# 보고서\n",
+		RunID:    "exec-6",
+		Logs:     map[string]string{"dnf": "error\n", "boot": "ok\n"},
+	})
+	if !got.FromModel {
+		t.Fatal("expected model draft")
+	}
+	byName := map[string]string{}
+	for _, item := range got.Judgments {
+		byName[item.Category] = item.Result
+	}
+	if byName["dnf"] != judge.ResultFound || byName["boot"] != judge.ResultClear || byName["secure"] != judge.ResultMissing {
+		t.Fatalf("judgments = %+v", got.Judgments)
 	}
 }
 

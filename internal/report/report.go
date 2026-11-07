@@ -22,7 +22,7 @@ import (
 const (
 	resetInstruction = "이전 형식 캐시를 쓰지 말고 이 템플릿만 따를 것"
 	sameInstruction  = "템플릿 변경 없음. 기존과 동일한 섹션 구조로 작성"
-	systemPrompt     = "서버 점검 보고서 초안을 작성한다. 템플릿의 섹션 구조를 지킨다. 입력에 없는 사실은 추측하지 않는다. 출력은 보고서 마크다운만 한다."
+	systemPrompt     = "서버 점검 보고서 초안을 작성한다. 템플릿의 섹션 구조를 지킨다. 입력에 없는 사실은 추측하지 않는다. 수집된 로그를 읽고 종류마다 이상 있음 또는 이상 없음으로 판정한다. 본문이 없는 종류는 판정하지 않는다. 보고서 맨 끝에 '## 판정' 절을 두고, 수집된 종류마다 '- 종류: 판정' 한 줄을 쓴다. 출력은 보고서 마크다운만 한다."
 )
 
 // Draft는 보고서 한 번을 만드는 입력이다.
@@ -44,11 +44,13 @@ type Draft struct {
 
 // Result는 저장할 마크다운이다.
 // FromModel이 참일 때만 호출 쪽이 템플릿 해시를 성공 기록으로 남긴다.
+// Judgments는 모델 응답의 판정 절에서 읽고, 응답이 없으면 수집 없음·판정 없음만 채운다.
 type Result struct {
 	Markdown  string
 	FromModel bool
 	Hash      string
 	Truncated []string
+	Judgments []judge.Result
 }
 
 type chatRequest struct {
@@ -73,18 +75,13 @@ type chatResponse struct {
 type modelInput struct {
 	RunID            string            `json:"run_id"`
 	FilteredLogs     map[string]string `json:"filtered_logs"`
-	Judgments        []judgmentInput   `json:"judgments"`
+	Collected        []string          `json:"collected"`
+	Missing          []string          `json:"missing"`
 	Rejections       []string          `json:"rejections"`
 	TemplateChanged  bool              `json:"template_changed"`
 	TemplateSHA256   string            `json:"template_sha256"`
 	TemplateMarkdown string            `json:"template_markdown,omitempty"`
 	Instruction      string            `json:"instruction"`
-}
-
-type judgmentInput struct {
-	Category string `json:"category"`
-	Result   string `json:"result"`
-	Matches  int    `json:"matches"`
 }
 
 // httpClient는 Chat Completions로 POST한다. 테스트가 갈아 끼운다.
@@ -109,6 +106,7 @@ func Build(d Draft) Result {
 		out.FromModel = true
 	}
 	out.Markdown = withRejections(markdown, d.Rejections)
+	out.Judgments = decide(out.Markdown, logs, out.FromModel)
 	return out
 }
 
@@ -178,10 +176,12 @@ func complete(d Draft, logs map[string]string, sum string, changed bool) (string
 }
 
 func userContent(d Draft, logs map[string]string, sum string, changed bool) (string, error) {
+	collected, missing := presence(logs)
 	in := modelInput{
 		RunID:           d.RunID,
 		FilteredLogs:    logs,
-		Judgments:       judgmentInputs(d.Judgments),
+		Collected:       collected,
+		Missing:         missing,
 		Rejections:      d.Rejections,
 		TemplateChanged: changed,
 		TemplateSHA256:  sum,
@@ -201,10 +201,77 @@ func userContent(d Draft, logs map[string]string, sum string, changed bool) (str
 	return string(raw), nil
 }
 
-func judgmentInputs(items []judge.Result) []judgmentInput {
-	out := make([]judgmentInput, len(items))
-	for i, item := range items {
-		out[i] = judgmentInput{Category: item.Category, Result: item.Result, Matches: item.Matches}
+func presence(logs map[string]string) (collected, missing []string) {
+	for _, name := range categories() {
+		if _, ok := logs[name]; ok {
+			collected = append(collected, name)
+			continue
+		}
+		missing = append(missing, name)
+	}
+	if collected == nil {
+		collected = []string{}
+	}
+	if missing == nil {
+		missing = []string{}
+	}
+	return collected, missing
+}
+
+func categories() []string {
+	return append(collect.LogKinds(), collect.ResourcesVerb)
+}
+
+// decide는 모델이 적은 판정 절을 종류 순서로 읽는다.
+// 수집이 없는 종류는 수집 없음이다. 모델이 그 종류를 적지 않으면 판정 없음이다.
+func decide(markdown string, logs map[string]string, fromModel bool) []judge.Result {
+	parsed := map[string]string{}
+	if fromModel {
+		parsed = parseJudgmentSection(markdown)
+	}
+	out := make([]judge.Result, 0, len(categories()))
+	for _, name := range categories() {
+		if _, ok := logs[name]; !ok {
+			out = append(out, judge.Result{Category: name, Result: judge.ResultMissing})
+			continue
+		}
+		result, ok := parsed[name]
+		if !ok {
+			result = judge.ResultPending
+		}
+		out = append(out, judge.Result{Category: name, Result: result})
+	}
+	return out
+}
+
+func parseJudgmentSection(markdown string) map[string]string {
+	out := map[string]string{}
+	idx := strings.LastIndex(markdown, "## 판정")
+	if idx < 0 {
+		return out
+	}
+	known := map[string]struct{}{}
+	for _, name := range categories() {
+		known[name] = struct{}{}
+	}
+	for _, line := range strings.Split(markdown[idx:], "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "- ") {
+			continue
+		}
+		name, result, ok := strings.Cut(strings.TrimPrefix(line, "- "), ":")
+		name = strings.TrimSpace(name)
+		result = strings.TrimSpace(result)
+		if !ok {
+			continue
+		}
+		if _, exists := known[name]; !exists {
+			continue
+		}
+		if result != judge.ResultFound && result != judge.ResultClear {
+			continue
+		}
+		out[name] = result
 	}
 	return out
 }
@@ -222,18 +289,7 @@ func fillLocal(template string, d Draft, logs map[string]string) string {
 	b.WriteString(base)
 	b.WriteString("\n\n## 기계 기록\n\n- 실행 ID: ")
 	b.WriteString(d.RunID)
-	b.WriteString("\n- 판정:\n")
-	if len(d.Judgments) == 0 {
-		b.WriteString("  - 없음\n")
-	}
-	for _, item := range d.Judgments {
-		b.WriteString("  - ")
-		b.WriteString(item.Category)
-		b.WriteString(": ")
-		b.WriteString(item.Result)
-		b.WriteByte('\n')
-	}
-	b.WriteString("- 수집 요약:\n")
+	b.WriteString("\n- 수집 요약:\n")
 	if len(logs) == 0 {
 		b.WriteString("  - 없음\n")
 	}

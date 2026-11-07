@@ -17,11 +17,9 @@ pipeline:
   timeouts:
     step: 10m
     reboot: 15m
-  # 수집 본문은 점검 머신에서 거른 뒤 저장한다.
-  # include가 있으면 그 문자열을 포함한 줄만 남긴다. exclude에 걸리면 뺀다.
+  # 수집 본문은 점검 머신에서 같은 줄만 합친 뒤 저장한다.
   # max_runes를 비우면 262144글자다. 넘치면 본문을 자르고 이력에 truncated를 남긴다.
-  # 아래 include/exclude는 Raw_Log를 보고 넣은 테스트용 단어다.
-  # include가 있으면 그 중 하나를 포함한 줄만 남고, exclude에 걸리면 빠진다.
+  # include/exclude 단어로는 줄을 빼지 않는다.
   filter:
     max_runes: 262144
     categories:
@@ -48,8 +46,7 @@ pipeline:
   redact:
     hostnames: []
     accounts: []
-  # 필터와 리댁션을 거친 본문에서 이 문자열을 포함한 줄을 센다.
-  # 센 줄이 0이면 이상 없음. 종류를 비우면 그 종류도 이상 없음.
+  # 실행은 이 규칙으로 판정하지 않는다. 판정은 로그를 본 모델이 적는다.
   rules: {}
 
 # 보고서 초안(AI). 코드에 제공자 이름을 두지 않는다.
