@@ -97,9 +97,7 @@ cp config/config.yaml.example config/config.yaml
 |---|---|
 | `secrets/id_ed25519` | 홈랩 접속용 SSH 개인키. 권한 `0600` |
 | `secrets/known_hosts` | 홈랩 호스트 키. 필수이며 검증을 끄지 않는다 |
-| `secrets/discord_webhook` | Discord 웹훅 주소 |
-| `secrets/ai_api_key` | 보고서 초안용 API 키 |
-| `secrets/s3_access_key`, `secrets/s3_secret_key` | MinIO PutObject 전용 키 |
+| `secrets/secrets` | `AI_API_KEY`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `DISCORD_WEBHOOK` 한 줄씩 |
 
 ```bash
 ./bin/gostodian key init --config config/config.yaml
