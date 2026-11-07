@@ -2,7 +2,7 @@
 
 홈랩 서버의 정기 점검을 자동화하는 도구.
 
-홈랩 밖의 점검 머신에서 `gostodian run` 프로세스를 한 번 실행하면, 그 프로세스가 VPN과 SSH로 홈랩에 접속해 유지보수와 로그 수집을 하고, 이상 여부를 판정한 뒤 보고서를 만들고 MinIO에 올린다. 결과 알림은 점검 머신이 Discord로 직접 보낸다. 프로세스 하나가 끝나면 `gostodian run`만 종료되고, `gostodian` 프로그램 파일은 점검 머신에 남는다.
+홈랩 밖의 점검 머신에서 `gostodian run` 프로세스를 한 번 실행하면, 그 프로세스가 VPN과 SSH로 홈랩에 접속해 유지보수와 로그 수집을 하고, 보고서를 만들어 S3 호환 저장소에 올린다. 결과 알림은 점검 머신이 Discord로 직접 보낸다. 프로세스 하나가 끝나면 `gostodian run`만 종료되고, `gostodian` 프로그램 파일은 점검 머신에 남는다.
 
 홈랩에는 게이트 `gostodian-gate`만 둔다. 게이트는 허용된 동사(작업 이름)만 통과시킨다.
 
@@ -21,9 +21,9 @@
        │           → collect-logs · resources            ▼
        │           → start(역순) → health            gostodian-svc
        │                                              sudo 고정 헬퍼
-       ├─ 필터 · 리댁션 · 규칙 판정
+       ├─ 중복 합치기 · 리댁션
        ├─ 보고서 (AI 실패 시 고정 템플릿)
-       ├─ MinIO  reports/  logs/  collects/
+       ├─ S3 호환 저장소  reports/
        └─ Discord  시작 · 완료 · 실패 · 거부
 ```
 
@@ -36,11 +36,11 @@
 5. `update`를 시작하고 `update-status`가 `done` 또는 `failed`가 될 때까지 본다.
 6. 재부팅 전 `boot_id`(부팅마다 바뀌는 값)를 저장하고 `reboot`를 호출한다. 지수 백오프(기다리는 시간을 늘려 가며 다시 접속)로 재접속한 뒤, `timeouts.reboot` 안에 `boot_id`가 바뀌었는지 확인한다.
 7. `collect-logs`로 로그 종류 `dnf`, `boot`, `secure`, `fail2ban`, `audit`을 읽고, `resources`로 RAM, CPU, Storage를 읽는다. 결과는 이력과 `logs/collects/<실행ID>/`에 남는다. 한 건이 실패해도 나머지 수집과 이후 기동은 이어가고, 빠진 항목은 실패로 기록한다.
-8. 수집한 글에서 같은 줄을 합치고, 리댁션(호스트명, IP, 계정, 토큰을 가림)한다. 단어로 줄을 빼거나 이상 여부를 판정하지 않는다.
+8. 수집한 글에서 같은 줄을 합치고, 리댁션(호스트명, IP, 계정, 토큰을 가림)한다. 단어로 줄을 빼지 않는다. 이상 여부는 모델이 보고서에 적는다.
 9. `docker_order`의 역순으로 서비스를 켜고 `health`로 컨테이너와 포트 Listening(접속을 받는 상태)을 본다.
 10. 실행 ID로 보고서 초안을 만든다. 로그는 구조화된 필드로 넣고 경계를 명시한다. AI 호출이 실패하면 고정 템플릿으로 보고서를 쓴다. LLM 출력은 실행하지 않는다.
-11. `health`가 성공한 뒤에만 MinIO로 올린다. `reports/`는 보고서, `logs/`는 실행 로그, `collects/`는 수집 아카이브이고, 셋은 같은 실행 ID다. 업로드 키는 PutObject만 한다.
-12. MinIO가 안 떠 있거나 업로드가 실패하면 산출물은 로컬에 남기고 Discord로 알린다. 이미 끝난 기동은 되돌리지 않는다.
+11. `health`가 성공한 뒤에만 보고서를 S3 호환 저장소의 `reports/`에 올린다. 실행 로그와 수집 본문은 점검 머신에 남긴다. 업로드 키는 PutObject만 한다.
+12. 저장소가 안 떠 있거나 업로드가 실패하면 보고서는 로컬에 남기고 Discord로 알린다. 이미 끝난 기동은 되돌리지 않는다.
 13. 완료 알림에 판정 요약과 보고서 위치를 넣는다. 이번 실행에서 게이트가 거부한 기록은 보고서에 남고, 거부가 있으면 완료 알림과 따로 알린다.
 14. 이력 파일을 쓰고 `gostodian run` 프로세스가 종료된다.
 
@@ -73,17 +73,16 @@ cp config/config.yaml.example config/config.yaml
 | `ssh.identity_file` / `known_hosts_file` | SSH 개인키, 홈랩 호스트 키 파일 경로 |
 | `pipeline.docker_order` | 정지 순서. 기동은 역순. 서비스 이름은 코드에 두지 않고 여기에만 둔다 |
 | `pipeline.timeouts.step` / `reboot` | 게이트 호출 1회 제한 시간(기본 10분), 재부팅 뒤 돌아오기까지 제한 시간(기본 15분) |
-| `pipeline.filter` | 같은 줄 합치기, 길이 상한. 상한을 비우면 262144글자. 넘치면 본문을 자르고 이력에 남긴다. 단어 include/exclude는 줄을 빼지 않는다 |
+| `pipeline.filter` | 같은 줄 합치기, 길이 상한. 상한을 비우면 262144글자. 넘치면 본문을 자르고 이력에 남긴다 |
 | `pipeline.redact` | 로그에 더 나오는 호스트명과 계정. IP, 토큰, 웹훅 주소는 설정 없이 가린다 |
-| `pipeline.rules` | 실행 중 단어로 판정하지 않는다. 판정은 로그를 본 모델이 적는다 |
 | `secrets.*_file` | 시크릿 파일 경로. compose의 `GOSTODIAN_*_FILE`이 있으면 그쪽이 우선 |
 | `vpn.interface` | 비어 있으면 VPN 검사를 하지 않는다. 예: `wg0` |
 | `report.api_url` / `model` | OpenAI 호환 Chat Completions base와 모델. 제공자 이름은 코드에 없음 |
 | `report.template_file` | 보고서 뼈대 마크다운. 기본 `templates/report_template.md`. 내장하지 않음 |
 | `report.timeout` / `max_input_runes` / `max_output_tokens` | AI 호출 한도. 실패하면 같은 템플릿으로 로컬 채움 |
-| `s3.endpoint` / `bucket` / `prefix` | MinIO 주소, 버킷, 그 앞 경로. 주소와 버킷이 비어 있으면 올리지 않고 로컬에 남긴다 |
+| `s3.endpoint` / `bucket` / `prefix` / `region` | S3 API 저장소. MinIO, AWS S3, R2는 이 값과 시크릿 키만 바꾼다. 주소와 버킷이 비어 있으면 올리지 않고 로컬에 남긴다 |
 
-보고서 API 주소와 모델 이름, MinIO 버킷과 프리픽스도 이 설정 파일에 둔다. 코드에 제공자 이름이나 버킷 이름을 넣지 않는다. 템플릿이 바뀌면 AI 요청에 전문과 캐시 초기화 지시를 넣고, 같으면 동일 형식으로 작성하라고만 한다.
+보고서 API 주소와 모델 이름, 저장소 주소와 버킷도 이 설정 파일에 둔다. 코드에 제공자 이름이나 버킷 이름을 넣지 않는다. Google Drive처럼 S3 API가 아닌 저장소는 이 설정으로 바뀌지 않는다. 템플릿이 바뀌면 AI 요청에 전문과 캐시 초기화 지시를 넣고, 같으면 동일 형식으로 작성하라고만 한다.
 
 ```bash
 ./bin/gostodian config validate --config config/config.yaml
@@ -138,7 +137,7 @@ ssh-keyscan -t ed25519 <홈랩호스트> >> secrets/known_hosts
 
    `update-status`, `health`, `resources`는 읽기만 하므로 sudo 없이 헬퍼를 부른다. `update` 헬퍼는 내부에서 일회성 작업으로 `dnf -y update`를 돌린다. `collect-logs` 뒤의 `dnf`는 패키지 갱신 로그라는 종류 이름이다. `dnf` 명령 자체는 sudoers에 없다.
 
-5. 게이트의 서비스 이름 허용 목록과 `docker_order`는 같은 이름만 쓴다. 허용 목록이 비어 있으면 `docker_order`도 비워 둔다. MinIO에 쓰는 키 권한은 PutObject만 연다.
+5. 게이트의 서비스 이름 허용 목록과 `docker_order`는 같은 이름만 쓴다. 허용 목록이 비어 있으면 `docker_order`도 비워 둔다. 저장소에 쓰는 키 권한은 PutObject만 연다.
 
 ### 게이트 동사
 
@@ -205,10 +204,10 @@ gostodian/
 └── agent.md                  # 이 저장소에서 문서를 고칠 때의 말버릇
 
 # git에 올리지 않는 로컬 디렉터리
-secrets/    # SSH 키, known_hosts, 웹훅, API 키, MinIO 키
+secrets/    # SSH 키, known_hosts, 웹훅, API 키, S3 키
 logs/       # 실행 이력 logs/<실행ID>.jsonl .json, 수집 logs/collects/<실행ID>/
 bin/        # make build 산출물
 LocalDoc/   # 개인 정리. 공유 문서가 아니다
 ```
 
-실행이 끝나면 보고서는 로컬에 남고, `health` 성공 뒤 MinIO의 `reports/`, `logs/`, `collects/`로 올라간다. 업로드가 실패하면 로컬 파일이 그 실행의 산출물이다.
+실행이 끝나면 보고서, 실행 로그, 수집 본문은 로컬에 남는다. `health` 성공 뒤에는 보고서만 `reports/<실행ID>.md`로 올라간다. 업로드가 실패하면 로컬 보고서가 그 실행의 산출물이다.

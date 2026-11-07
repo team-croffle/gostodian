@@ -1,6 +1,6 @@
 # 배포와 사용 (v1.0.0)
 
-점검 머신에서 `gostodian run`을 한 번 실행하는 방법이다. 그 프로세스가 VPN과 SSH로 홈랩에 접속해 유지보수와 로그 수집을 하고, 이상 여부를 판정한 뒤 보고서를 만들어 MinIO에 올린다. 알림은 점검 머신이 Discord로 보낸다. 프로세스가 끝나면 `gostodian run`만 종료되고, 프로그램 파일은 점검 머신에 남는다.
+점검 머신에서 `gostodian run`을 한 번 실행하는 방법이다. 그 프로세스가 VPN과 SSH로 홈랩에 접속해 유지보수와 로그 수집을 하고, 보고서를 만들어 S3 호환 저장소에 올린다. 알림은 점검 머신이 Discord로 보낸다. 프로세스가 끝나면 `gostodian run`만 종료되고, 프로그램 파일은 점검 머신에 남는다.
 
 홈랩에는 게이트 `gostodian-gate`와 헬퍼 `gostodian-svc`를 둔다. 헬퍼는 이 저장소에 없다. 별도 저장소에서 만들어 `/usr/local/libexec/gostodian-svc`에 둔다. 게이트는 허용된 동사만 그 헬퍼로 넘긴다.
 
@@ -32,9 +32,8 @@ cp config/config.yaml.example config/config.yaml
 | `pipeline.docker_order` | 정지 순서. 기동은 역순. 홈랩 허용 목록과 같은 이름만 적는다 |
 | `pipeline.timeouts.step` | 게이트 호출 1회의 제한 시간. 기본 10분 |
 | `pipeline.timeouts.reboot` | 재부팅 뒤 돌아올 때까지의 제한 시간. 기본 15분 |
-| `pipeline.filter` | 같은 줄 합치기, 길이 상한. 상한을 비우면 262144글자. 단어 include/exclude는 줄을 빼지 않는다 |
+| `pipeline.filter` | 같은 줄 합치기, 길이 상한. 상한을 비우면 262144글자 |
 | `pipeline.redact` | 로그에 더 나오는 호스트명과 계정. IP, 토큰, 웹훅 주소는 설정 없이 가린다 |
-| `pipeline.rules` | 실행 중 단어로 판정하지 않는다. 판정은 로그를 본 모델이 적는다 |
 | `report.api_url` / `model` | OpenAI 호환 Chat Completions base와 모델. 예시 값은 Claude 쪽이다. 제공자 이름은 코드에 없다 |
 | `report.template_file` | 보고서 뼈대. 기본 `templates/report_template.md` |
 | `report.timeout` | AI 호출 제한 시간. 기본 10분 |
@@ -44,7 +43,7 @@ cp config/config.yaml.example config/config.yaml
 | `vpn.interface` | 비어 있으면 VPN 검사를 하지 않는다. 예: `wg0` |
 | `secrets.*_file` | 시크릿 파일 경로. 값은 넣지 않는다 |
 
-MinIO 버킷과 그 앞 경로는 점검 머신 설정에 둔다. 업로드 키는 PutObject만 허용한다. 클라이언트 KMS 키는 쓰지 않는다.
+보고서 저장소는 S3 API다. MinIO, AWS S3, R2는 `s3.endpoint`, `s3.bucket`, `s3.region`과 시크릿의 `S3_ACCESS_KEY`, `S3_SECRET_KEY`만 바꾼다. Google Drive처럼 API가 다른 저장소는 이 설정으로 바뀌지 않는다. 업로드 키는 PutObject만 허용한다. 클라이언트 KMS 키는 쓰지 않는다. 실행 로그와 수집 본문은 올리지 않는다.
 
 ```bash
 ./bin/gostodian config validate --config config/config.yaml
@@ -154,17 +153,11 @@ docker compose run --rm gostodian run --log-dir /var/lib/gostodian
 
 6. 게이트의 서비스 이름 허용 목록과 `pipeline.docker_order`는 같은 이름만 쓴다. 허용 목록이 비어 있으면 `docker_order`도 비워 둔다. `down`과 `start`가 어느 compose 디렉터리를 가리키는지는 헬퍼에 둔다.
 
-## 3. MinIO와 Discord
+## 3. 보고서 저장소와 Discord
 
-MinIO 키는 PutObject만 연다. `gostodian run`은 `health`가 성공한 뒤에만 올린다. 같은 실행 ID로 세 갈래다.
+저장소 키는 PutObject만 연다. `gostodian run`은 `health`가 성공한 뒤에 보고서만 올린다. 키는 `reports/<실행ID>.md`다.
 
-| 위치 | 내용 |
-|---|---|
-| `reports/` | 보고서 |
-| `logs/` | 실행 로그 |
-| `collects/` | 수집 아카이브 |
-
-MinIO가 안 떠 있거나 업로드가 실패하면 파일은 점검 머신에 남고 Discord로 알린다. 이미 끝난 서비스 기동은 되돌리지 않는다.
+저장소가 안 떠 있거나 업로드가 실패하면 보고서는 점검 머신에 남고 Discord로 알린다. 실행 로그와 수집 본문은 항상 점검 머신에만 남는다. 이미 끝난 서비스 기동은 되돌리지 않는다.
 
 Discord 웹훅 파일은 점검 머신에만 둔다. 알림 문장에 웹훅 주소, 키 본문, 원문 로그의 비밀은 넣지 않는다.
 
@@ -177,10 +170,10 @@ Discord 웹훅 파일은 점검 머신에만 둔다. 알림 문장에 웹훅 주
 5. `update`를 시작하고 `update-status`가 `done` 또는 `failed`가 될 때까지 본다.
 6. `boot_id`를 저장하고 `reboot`를 호출한다. `timeouts.reboot` 안에 `boot_id`가 바뀌면 재접속으로 본다.
 7. `dnf`, `boot`, `secure`, `fail2ban`, `audit`과 RAM, CPU, Storage를 읽는다. 한 종류가 실패해도 나머지 수집과 이후 기동은 이어간다.
-8. 수집 본문에서 같은 줄을 합치고 가린다. 단어로 줄을 빼거나 이상 여부를 판정하지 않는다.
+8. 수집 본문에서 같은 줄을 합치고 가린다. 단어로 줄을 빼지 않는다. 이상 여부는 모델이 보고서에 적는다.
 9. `docker_order`의 역순으로 서비스를 켜고 `health`를 본다.
 10. `templates/report_template.md` 형식으로 보고서를 쓴다. 템플릿이 바뀌었거나 첫 실행이면 AI 요청에 템플릿 전문을 넣는다. 같으면 같은 형식으로 쓰라고만 한다. 모델은 로그를 본 뒤 종류별 판정을 보고서 끝에 적는다. AI가 실패하면 같은 템플릿에 실행 ID와 수집 요약만 채우고, 수집된 종류의 판정은 「판정 없음」이다. AI가 돌려준 글은 실행하지 않는다.
-11. `health`가 성공했을 때만 MinIO에 올린다.
+11. `health`가 성공했을 때만 보고서를 저장소에 올린다.
 12. 완료 알림에 판정 요약과 보고서 위치를 넣는다. 게이트가 거부한 기록이 있으면 보고서에 남기고, 완료 알림과 따로 알린다.
 
 수집이 아닌 단계가 실패하면 다음 단계로 가지 않고 실패를 알린다.
