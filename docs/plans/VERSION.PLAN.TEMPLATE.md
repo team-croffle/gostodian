@@ -1,7 +1,7 @@
 # 상세 구현 문서 템플릿
 
-기준 로드맵: `Doc/RoadMap_v1.md`  
-파일 위치: `Docs/Plan/vX.Y.Z.md` (버전당 하나)
+기준 로드맵: `docs/RoadMap.md`  
+파일 위치: `docs/plans/vX.Y.Z.md` (버전당 하나)
 
 이 문서는 버전별 상세 구현 파일을 쓸 때의 지침이다. 아래 뼈대를 복사해 해당 버전 내용만 채운다.
 
@@ -20,7 +20,7 @@
 ```markdown
 # vX.Y.Z (범위 이름)
 
-기준: `Doc/RoadMap_v1.md`의 해당 버전
+기준: `docs/RoadMap.md`의 해당 버전
 
 ## 1. 목표
 
