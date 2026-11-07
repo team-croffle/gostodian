@@ -57,7 +57,7 @@ pipeline:
 # 예: Anthropic OpenAI 호환 base. 실제 주소·모델은 점검 머신에서만 채운다.
 report:
   api_url: https://api.anthropic.com/v1
-  model: claude-sonnet-4-20250514
+  model: claude-sonnet-5-5
   template_file: templates/report_template.md
   timeout: 120s
   max_input_runes: 48000
