@@ -21,10 +21,13 @@ const sendTimeout = 10 * time.Second
 
 // 알림 종류.
 const (
-	KindStart   = "start"
-	KindStatus  = "status"
-	KindFailed  = "failed"
-	KindConnect = "connect"
+	KindStart    = "start"
+	KindStatus   = "status"
+	KindDone     = "done"
+	KindFailed   = "failed"
+	KindConnect  = "connect"
+	KindRejected = "rejected"
+	KindUpload   = "upload"
 )
 
 // Notice는 Discord에 올릴 점검 알림이다.
@@ -37,6 +40,8 @@ type Notice struct {
 	Command     string
 	Status      string
 	Class       string
+	Summary     string
+	Report      string
 }
 
 var (
@@ -59,8 +64,14 @@ func (n Notice) Text() string {
 		b.WriteString("점검 시작\n")
 	case KindStatus:
 		b.WriteString("status 완료\n")
+	case KindDone:
+		b.WriteString("점검 완료\n")
 	case KindConnect:
 		b.WriteString("접속 실패\n")
+	case KindRejected:
+		b.WriteString("게이트 거부\n")
+	case KindUpload:
+		b.WriteString("업로드 실패\n")
 	default:
 		b.WriteString("점검 실패\n")
 	}
@@ -70,6 +81,14 @@ func (n Notice) Text() string {
 	writeLine(&b, "command", n.Command)
 	writeLine(&b, "status", n.Status)
 	writeLine(&b, "class", n.Class)
+	writeLine(&b, "report", n.Report)
+	if n.Summary != "" {
+		b.WriteString("judgments:\n")
+		b.WriteString(n.Summary)
+		if !strings.HasSuffix(n.Summary, "\n") {
+			b.WriteByte('\n')
+		}
+	}
 	return b.String()
 }
 

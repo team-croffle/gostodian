@@ -90,6 +90,49 @@ func (l *Log) ID() string {
 	return l.id
 }
 
+// Dir는 이 실행의 로그 디렉터리다.
+func (l *Log) Dir() string {
+	return l.dir
+}
+
+// Steps는 지금까지 이력에 쌓인 단계의 복사본이다.
+func (l *Log) Steps() []Event {
+	out := make([]Event, len(l.steps))
+	copy(out, l.steps)
+	return out
+}
+
+// Judgments는 이 실행의 종류별 판정 복사본이다.
+func (l *Log) Judgments() []Judgment {
+	out := make([]Judgment, len(l.judgments))
+	copy(out, l.judgments)
+	return out
+}
+
+// Snapshot은 지금까지의 단계로 성공/실패 파일과 같은 JSON을 만든다.
+// 업로드 단계는 이 스냅샷 뒤에 로컬 이력에만 붙는다.
+func (l *Log) Snapshot(status string) ([]byte, error) {
+	history := History{
+		ExecutionID: l.id,
+		Status:      status,
+		Steps:       l.steps,
+		Judgments:   l.judgments,
+	}
+	data, err := json.MarshalIndent(history, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(data, '\n'), nil
+}
+
+// Sync는 구조화 로그를 디스크에 반영한다.
+func (l *Log) Sync() error {
+	if l.file == nil {
+		return errors.New("log is closed")
+	}
+	return l.file.Sync()
+}
+
 // SetJudgments는 이 실행의 종류별 판정을 성공/실패 파일에 남길 내용으로 기억한다.
 func (l *Log) SetJudgments(items []judge.Result) {
 	l.judgments = make([]Judgment, len(items))

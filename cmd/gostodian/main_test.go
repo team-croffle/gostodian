@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -198,12 +200,13 @@ func TestRunCallsSSH(t *testing.T) {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	history := readHistory(t, logDir)
-	// status + update + update-status + boot-id + reboot + reconnect + 로그 4 + resources + judge + health
-	if history.Status != "ok" || len(history.Steps) != 13 || history.Steps[0].Command != ssh.StatusCommand || history.Steps[0].Stdout != "ok" {
+	// status + update + update-status + boot-id + reboot + reconnect + 로그 4 + resources + judge + health + report
+	if history.Status != "ok" || len(history.Steps) != 14 || history.Steps[0].Command != ssh.StatusCommand || history.Steps[0].Stdout != "ok" {
 		t.Fatalf("history = %+v", history)
 	}
-	if history.Steps[len(history.Steps)-1].Command != ssh.HealthVerb || history.Steps[len(history.Steps)-1].Status != "ok" {
-		t.Fatalf("health = %+v", history.Steps[len(history.Steps)-1])
+	health := history.Steps[len(history.Steps)-2]
+	if health.Command != ssh.HealthVerb || health.Status != "ok" || history.Steps[len(history.Steps)-1].Command != "report" {
+		t.Fatalf("tail = %+v", history.Steps[len(history.Steps)-2:])
 	}
 	if strings.Contains(historyText(t, logDir), "id_ed25519") {
 		t.Fatal("identity path was written to the log")
@@ -259,7 +262,7 @@ func TestRunStopStartHistory(t *testing.T) {
 		t.Fatalf("got = %v", got)
 	}
 	history := readHistory(t, logDir)
-	if history.Status != "ok" || len(history.Steps) != 17 {
+	if history.Status != "ok" || len(history.Steps) != 18 {
 		t.Fatalf("history = %+v", history)
 	}
 	want := []string{"status", "stop svc-a", "stop svc-b", "update", "update-status", "boot-id", "reboot", "boot-id", "collect-logs dnf", "collect-logs boot", "collect-logs secure", "collect-logs fail2ban", "resources", "judge", "start svc-b", "start svc-a", "health"}
@@ -1012,14 +1015,14 @@ func TestRunNotifiesStatus(t *testing.T) {
 	if err := run([]string{"run", "--config", example, "--log-dir", t.TempDir()}, io.Discard, &stderr); err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].Kind != discord.KindStart || got[1].Kind != discord.KindStatus || got[1].Status != "ok" || got[1].Command != "status" {
+	if len(got) != 2 || got[0].Kind != discord.KindStart || got[1].Kind != discord.KindDone || got[1].Status != "ok" || got[1].Command != "status" {
 		t.Fatalf("notices = %+v", got)
 	}
 	blob := got[0].Text() + got[1].Text()
 	if strings.Contains(blob, "raw-log") || strings.Contains(blob, "raw-stderr") || strings.Contains(blob, "hostname:") {
 		t.Fatalf("notice = %q", blob)
 	}
-	if !strings.Contains(got[1].Text(), "status 완료\n") || !strings.Contains(stderr.String(), "execution_id:") {
+	if !strings.Contains(got[1].Text(), "점검 완료\n") || !strings.Contains(got[1].Text(), "judgments:\n") || !strings.Contains(got[1].Text(), "report: ") || !strings.Contains(stderr.String(), "execution_id:") {
 		t.Fatalf("text = %q stderr = %q", got[1].Text(), stderr.String())
 	}
 }
@@ -1162,7 +1165,7 @@ func TestRunNotifyFailureKeepsCheckResult(t *testing.T) {
 			if step.Status != "failed" || step.Error != "discord webhook: send failed" {
 				t.Fatalf("notify step = %+v", step)
 			}
-		case "update", "update-status", "boot-id", "reboot", "reconnect", "stop", "start", "health", "collect-logs", "resources", "judge":
+		case "update", "update-status", "boot-id", "reboot", "reconnect", "stop", "start", "health", "collect-logs", "resources", "judge", "report":
 			if step.Status != "ok" {
 				t.Fatalf("maintenance step = %+v", step)
 			}
@@ -1263,6 +1266,206 @@ func readSuffix(t *testing.T, dir, suffix string) []byte {
 	}
 	t.Fatalf("no %s file in %s", suffix, dir)
 	return nil
+}
+
+func TestRunUploadsAfterHealth(t *testing.T) {
+	restoreConnect(t)
+	restoreClock(t)
+	silenceNotify(t)
+	var methods, paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method)
+		paths = append(paths, r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	connect = func(config.Config) runner { return &stubRunner{} }
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "access"), "access-key\n")
+	writeFile(t, filepath.Join(dir, "secret"), "secret-key\n")
+	cfgPath := filepath.Join(dir, "config.yaml")
+	writeFile(t, cfgPath, "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: k\n  known_hosts_file: n\ns3:\n  endpoint: "+srv.URL+"\n  bucket: lab\n  prefix: gostodian\nsecrets:\n  s3_access_key_file: "+yamlQuote(filepath.Join(dir, "access"))+"\n  s3_secret_key_file: "+yamlQuote(filepath.Join(dir, "secret"))+"\n")
+	logDir := t.TempDir()
+	if err := run([]string{"run", "--config", cfgPath, "--log-dir", logDir}, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	history := readHistory(t, logDir)
+	if history.Status != "ok" {
+		t.Fatalf("history = %+v", history)
+	}
+	if !onlyMethod(methods, http.MethodPut) {
+		t.Fatalf("methods = %v", methods)
+	}
+	joined := strings.Join(paths, "\n")
+	id := history.ExecutionID
+	for _, part := range []string{
+		"/lab/gostodian/reports/" + id + ".md",
+		"/lab/gostodian/logs/" + id + ".json",
+		"/lab/gostodian/logs/" + id + ".jsonl",
+		"/lab/gostodian/collects/" + id + "/dnf",
+	} {
+		if !strings.Contains(joined, part) {
+			t.Fatalf("missing %s in %s", part, joined)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(logDir, "reports", id+".md")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunUploadFailureKeepsLocalReport(t *testing.T) {
+	restoreConnect(t)
+	restoreClock(t)
+	restoreNotify(t)
+	var got []discord.Notice
+	notify = captureNotices(t, &got)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	connect = func(config.Config) runner { return &stubRunner{} }
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "access"), "access-key\n")
+	writeFile(t, filepath.Join(dir, "secret"), "secret-key\n")
+	cfgPath := filepath.Join(dir, "config.yaml")
+	writeFile(t, cfgPath, "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: k\n  known_hosts_file: n\ns3:\n  endpoint: "+srv.URL+"\n  bucket: lab\nsecrets:\n  s3_access_key_file: "+yamlQuote(filepath.Join(dir, "access"))+"\n  s3_secret_key_file: "+yamlQuote(filepath.Join(dir, "secret"))+"\n")
+	logDir := t.TempDir()
+	err := run([]string{"run", "--config", cfgPath, "--log-dir", logDir}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "upload") {
+		t.Fatalf("err = %v", err)
+	}
+	history := readHistory(t, logDir)
+	if _, statErr := os.Stat(filepath.Join(logDir, "reports", history.ExecutionID+".md")); statErr != nil {
+		t.Fatal(statErr)
+	}
+	var uploadNotice bool
+	for _, notice := range got {
+		if notice.Kind != discord.KindUpload {
+			continue
+		}
+		uploadNotice = true
+		if strings.Contains(notice.Text(), "access-key") || strings.Contains(notice.Text(), "secret-key") {
+			t.Fatalf("text = %q", notice.Text())
+		}
+	}
+	if !uploadNotice {
+		t.Fatalf("notices = %+v", got)
+	}
+}
+
+func TestRunHealthFailureSkipsUpload(t *testing.T) {
+	restoreConnect(t)
+	restoreClock(t)
+	silenceNotify(t)
+	var puts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		puts++
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	inner := &stubRunner{}
+	connect = func(config.Config) runner {
+		return &stubRunner{runVerb: func(verb, name string) (ssh.Result, error) {
+			if verb == ssh.HealthVerb {
+				return ssh.Result{ExitCode: 1, Stderr: "down\n"}, nil
+			}
+			return inner.RunVerb(verb, name)
+		}}
+	}
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "access"), "access-key\n")
+	writeFile(t, filepath.Join(dir, "secret"), "secret-key\n")
+	cfgPath := filepath.Join(dir, "config.yaml")
+	writeFile(t, cfgPath, "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: k\n  known_hosts_file: n\ns3:\n  endpoint: "+srv.URL+"\n  bucket: lab\nsecrets:\n  s3_access_key_file: "+yamlQuote(filepath.Join(dir, "access"))+"\n  s3_secret_key_file: "+yamlQuote(filepath.Join(dir, "secret"))+"\n")
+	err := run([]string{"run", "--config", cfgPath, "--log-dir", t.TempDir()}, io.Discard, io.Discard)
+	if err == nil || puts != 0 {
+		t.Fatalf("err = %v puts = %d", err, puts)
+	}
+}
+
+func TestRunRejectionIsSeparateNotice(t *testing.T) {
+	restoreConnect(t)
+	restoreClock(t)
+	restoreNotify(t)
+	var got []discord.Notice
+	notify = captureNotices(t, &got)
+	var puts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		puts++
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	connect = func(config.Config) runner {
+		return &stubRunner{runVerb: func(verb, name string) (ssh.Result, error) {
+			if verb == ssh.StopVerb {
+				return ssh.Result{ExitCode: 1, Stderr: "rejected: name: \"stop nope\"\n"}, nil
+			}
+			return (&stubRunner{}).RunVerb(verb, name)
+		}}
+	}
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "access"), "access-key\n")
+	writeFile(t, filepath.Join(dir, "secret"), "secret-key\n")
+	cfgPath := filepath.Join(dir, "config.yaml")
+	writeFile(t, cfgPath, "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: k\n  known_hosts_file: n\npipeline:\n  docker_order:\n    - nope\ns3:\n  endpoint: "+srv.URL+"\n  bucket: lab\nsecrets:\n  s3_access_key_file: "+yamlQuote(filepath.Join(dir, "access"))+"\n  s3_secret_key_file: "+yamlQuote(filepath.Join(dir, "secret"))+"\n")
+	logDir := t.TempDir()
+	if err := run([]string{"run", "--config", cfgPath, "--log-dir", logDir}, io.Discard, io.Discard); err == nil {
+		t.Fatal("expected rejection to fail the run")
+	}
+	if puts != 0 {
+		t.Fatalf("puts = %d", puts)
+	}
+	var rejected, failed bool
+	for _, notice := range got {
+		if notice.Kind == discord.KindRejected {
+			rejected = true
+			text := notice.Text()
+			if !strings.Contains(text, "게이트 거부\n") || !strings.Contains(text, "stop nope") || strings.Contains(text, "rejected: name") {
+				t.Fatalf("text = %q", text)
+			}
+		}
+		if notice.Kind == discord.KindFailed {
+			failed = true
+		}
+		if notice.Kind == discord.KindDone {
+			t.Fatal("rejection completed the run")
+		}
+	}
+	if !rejected || !failed {
+		t.Fatalf("notices = %+v", got)
+	}
+	history := readHistory(t, logDir)
+	report, err := os.ReadFile(filepath.Join(logDir, "reports", history.ExecutionID+".md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(report), "stop nope") || !strings.Contains(string(report), "## 게이트 거부") {
+		t.Fatalf("report = %s", report)
+	}
+}
+
+func onlyMethod(methods []string, method string) bool {
+	if len(methods) == 0 {
+		return false
+	}
+	for _, item := range methods {
+		if item != method {
+			return false
+		}
+	}
+	return true
+}
+
+func yamlQuote(path string) string {
+	return "\"" + filepath.ToSlash(path) + "\""
+}
+
+func writeFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 type stubRunner struct {

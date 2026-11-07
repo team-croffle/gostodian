@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,7 +18,9 @@ import (
 	"gostodian/internal/judge"
 	"gostodian/internal/pipeline"
 	"gostodian/internal/redact"
+	"gostodian/internal/report"
 	"gostodian/internal/runlog"
+	"gostodian/internal/s3"
 	"gostodian/internal/ssh"
 	"gostodian/internal/vpn"
 )
@@ -207,21 +211,28 @@ func runSub(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	if err := runMaintenance(lg, cfg, client, stdout, stderr); err != nil {
-		noteErr := deliver(lg, cfg, discord.Notice{
-			Kind:        discord.KindFailed,
-			ExecutionID: lg.ID(),
-			Host:        cfg.Server.Host,
-			User:        cfg.Server.User,
-			Command:     "maintenance",
-			Status:      "failed",
-		})
-		finErr := lg.Finish("failed")
-		return errors.Join(err, noteErr, finErr)
+	bodies, healthOK, maintErr := runMaintenance(lg, cfg, client, stdout, stderr)
+	rejections := rejectedCommands(lg.Steps())
+	var reportPath string
+	if healthOK || len(rejections) > 0 {
+		reportPath = writeReport(lg, cfg, bodies, rejections, healthOK)
 	}
-
-	noteErr := deliver(lg, cfg, checkNotice(lg.ID(), cfg, result, nil))
-	finErr := lg.Finish("ok")
+	var uploaded string
+	var uploadErr error
+	if healthOK {
+		uploaded, uploadErr = uploadRun(lg, cfg, reportPath, maintErr == nil)
+	}
+	noteErr := deliverFollowup(lg, cfg, healthOK, maintErr, uploadErr, reportPath, uploaded, rejections)
+	status := "ok"
+	var outcome error
+	if !healthOK || maintErr != nil || uploadErr != nil {
+		status = "failed"
+		outcome = errors.Join(maintErr, uploadErr)
+	}
+	finErr := lg.Finish(status)
+	if outcome != nil {
+		return errors.Join(outcome, noteErr, finErr)
+	}
 	return errors.Join(noteErr, finErr)
 }
 
@@ -243,31 +254,31 @@ func writeResult(stdout, stderr io.Writer, result ssh.Result) error {
 // 각 게이트 호출에는 timeouts.step을 쓰고, 수집이 아닌 단계가 실패하면 다음 단계·자동 롤백 없이 반환한다.
 // 수집 한 건이 실패해도 나머지 수집과 이후 기동은 이어가고, 끝난 뒤에 그 실패를 반환한다.
 // Discord 알림은 호출 쪽이 보낸다.
-func runMaintenance(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr io.Writer) error {
+func runMaintenance(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr io.Writer) (map[string]string, bool, error) {
 	for _, name := range pipeline.StopOrder(cfg.Pipeline.DockerOrder) {
 		if err := runOneService(lg, cfg, client, ssh.StopVerb, name, stdout, stderr); err != nil {
-			return err
+			return nil, false, err
 		}
 	}
 	if err := runUpdate(lg, cfg, client, stdout, stderr); err != nil {
-		return err
+		return nil, false, err
 	}
 	if err := runReboot(lg, cfg, client, stdout, stderr); err != nil {
-		return err
+		return nil, false, err
 	}
 	bodies, collectErr := runCollect(lg, cfg, client, stdout, stderr)
 	if err := recordJudgment(lg, cfg, bodies); err != nil {
-		return errors.Join(collectErr, err)
+		return bodies, false, errors.Join(collectErr, err)
 	}
 	for _, name := range pipeline.StartOrder(cfg.Pipeline.DockerOrder) {
 		if err := runOneService(lg, cfg, client, ssh.StartVerb, name, stdout, stderr); err != nil {
-			return errors.Join(collectErr, err)
+			return bodies, false, errors.Join(collectErr, err)
 		}
 	}
 	if _, err := runGateStep(lg, cfg, client, ssh.HealthVerb, "", ssh.HealthVerb, stdout, stderr, nil); err != nil {
-		return errors.Join(collectErr, err)
+		return bodies, false, errors.Join(collectErr, err)
 	}
-	return collectErr
+	return bodies, true, collectErr
 }
 
 // runCollect는 재부팅·재접속 뒤, 서비스 기동 전에 로그 네 종류와 리소스를 모은다.
@@ -752,6 +763,288 @@ func checkNotice(id string, cfg config.Config, result ssh.Result, runErr error) 
 		n.Status = "failed"
 	}
 	return n
+}
+
+func deliverFollowup(lg *runlog.Log, cfg config.Config, healthOK bool, maintErr, uploadErr error, reportPath, uploaded string, rejections []string) error {
+	var err error
+	if len(rejections) > 0 {
+		err = errors.Join(err, deliver(lg, cfg, discord.Notice{
+			Kind:        discord.KindRejected,
+			ExecutionID: lg.ID(),
+			Host:        cfg.Server.Host,
+			User:        cfg.Server.User,
+			Command:     strings.Join(rejections, ", "),
+			Status:      "rejected",
+		}))
+	}
+	if healthOK {
+		location := reportPath
+		if uploadErr == nil && uploaded != "" {
+			location = uploaded
+		}
+		err = errors.Join(err, deliver(lg, cfg, discord.Notice{
+			Kind:        discord.KindDone,
+			ExecutionID: lg.ID(),
+			Host:        cfg.Server.Host,
+			User:        cfg.Server.User,
+			Command:     ssh.StatusCommand,
+			Status:      "ok",
+			Summary:     judgmentSummary(lg.Judgments()),
+			Report:      location,
+		}))
+	}
+	if uploadErr != nil {
+		err = errors.Join(err, deliver(lg, cfg, discord.Notice{
+			Kind:        discord.KindUpload,
+			ExecutionID: lg.ID(),
+			Host:        cfg.Server.Host,
+			User:        cfg.Server.User,
+			Command:     "upload",
+			Status:      "failed",
+			Report:      reportPath,
+		}))
+	}
+	if !healthOK || maintErr != nil {
+		err = errors.Join(err, deliver(lg, cfg, discord.Notice{
+			Kind:        discord.KindFailed,
+			ExecutionID: lg.ID(),
+			Host:        cfg.Server.Host,
+			User:        cfg.Server.User,
+			Command:     "maintenance",
+			Status:      "failed",
+		}))
+	}
+	return err
+}
+
+func judgmentSummary(items []runlog.Judgment) string {
+	var b strings.Builder
+	for _, item := range items {
+		b.WriteString(item.Category)
+		b.WriteString(": ")
+		b.WriteString(item.Result)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+func rejectedCommands(steps []runlog.Event) []string {
+	var out []string
+	for i := range steps {
+		if !strings.Contains(steps[i].Error, "rejected:") && !strings.Contains(steps[i].Stderr, "rejected:") {
+			continue
+		}
+		command := steps[i].Command
+		if command == "" {
+			command = steps[i].Step
+		}
+		out = append(out, command)
+	}
+	return out
+}
+
+func writeReport(lg *runlog.Log, cfg config.Config, bodies map[string]string, rejections []string, useAI bool) string {
+	template, readErr := os.ReadFile(cfg.Report.TemplateFile) //nolint:gosec // 운영자가 지정한 템플릿 경로
+	d := report.Draft{
+		Template:        string(template),
+		PreviousHash:    readTrimmed(templateHashPath(lg.Dir(), cfg.Report.TemplateHashFile)),
+		RunID:           lg.ID(),
+		Logs:            bodies,
+		Judgments:       judgeResults(lg.Judgments()),
+		Rejections:      rejections,
+		MaxInputRunes:   cfg.Report.MaxInputRunes,
+		MaxOutputTokens: cfg.Report.MaxOutputTokens,
+		Timeout:         reportTimeout(cfg),
+	}
+	if useAI && readErr == nil {
+		d.APIURL = cfg.Report.APIURL
+		d.Model = cfg.Report.Model
+		key, err := config.ReadSecretFile(cfg.Secrets.AIAPIKeyFile)
+		if err == nil {
+			d.APIKey = key
+		}
+	}
+	result := report.Build(d)
+	markdown := redact.Apply(result.Markdown, redactOptions(cfg))
+	if d.APIKey != "" && strings.Contains(markdown, d.APIKey) {
+		markdown = strings.ReplaceAll(markdown, d.APIKey, "[token]")
+	}
+	path, writeErr := writeReportFile(lg.Dir(), lg.ID(), markdown)
+	status := "ok"
+	errText := ""
+	stdoutText := "local"
+	if result.FromModel {
+		stdoutText = "ai"
+		hashPath := templateHashPath(lg.Dir(), cfg.Report.TemplateHashFile)
+		if err := os.WriteFile(hashPath, []byte(result.Hash+"\n"), 0o600); err != nil { //nolint:gosec // 운영자가 지정한 로그 디렉터리
+			errText = "report hash"
+		}
+	}
+	if len(result.Truncated) > 0 {
+		stdoutText += "\ntruncated: " + strings.Join(result.Truncated, ",")
+	}
+	if writeErr != nil {
+		status = "failed"
+		errText = "report write"
+		path = ""
+	}
+	_ = lg.Step(runlog.Event{ //nolint:errcheck // 보고서 파일 경로가 이력보다 우선이다
+		Step:    "report",
+		Status:  status,
+		Command: "report",
+		Host:    cfg.Server.Host,
+		User:    cfg.Server.User,
+		Error:   errText,
+		Stdout:  stdoutText,
+	})
+	return path
+}
+
+func writeReportFile(dir, id, body string) (string, error) {
+	path := filepath.Join(dir, "reports", id+".md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil { //nolint:gosec // 운영자가 지정한 로그 디렉터리
+		return "", err
+	}
+	return path, nil
+}
+
+func judgeResults(items []runlog.Judgment) []judge.Result {
+	out := make([]judge.Result, len(items))
+	for i, item := range items {
+		out[i] = judge.Result{Category: item.Category, Result: item.Result, Matches: item.Matches}
+	}
+	return out
+}
+
+func reportTimeout(cfg config.Config) time.Duration {
+	d, err := time.ParseDuration(strings.TrimSpace(cfg.Report.Timeout))
+	if err != nil || d <= 0 {
+		return 120 * time.Second
+	}
+	return d
+}
+
+func templateHashPath(logDir, configured string) string {
+	if strings.TrimSpace(configured) == "" || configured == "logs/report_template.sha256" {
+		return filepath.Join(logDir, "report_template.sha256")
+	}
+	return configured
+}
+
+func readTrimmed(path string) string {
+	b, err := os.ReadFile(path) //nolint:gosec // 운영자가 지정한 해시 파일
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func uploadRun(lg *runlog.Log, cfg config.Config, reportPath string, maintOK bool) (string, error) {
+	if strings.TrimSpace(cfg.S3.Endpoint) == "" || strings.TrimSpace(cfg.S3.Bucket) == "" {
+		return "", nil
+	}
+	access, err := config.ReadSecretFile(cfg.Secrets.S3AccessKeyFile)
+	if err != nil || access == "" {
+		return "", recordUpload(lg, cfg, "failed", "s3 key")
+	}
+	secret, err := config.ReadSecretFile(cfg.Secrets.S3SecretKeyFile)
+	if err != nil || secret == "" {
+		return "", recordUpload(lg, cfg, "failed", "s3 key")
+	}
+	status := "failed"
+	if maintOK {
+		status = "ok"
+	}
+	objects, err := uploadObjects(lg, reportPath, status)
+	if err != nil {
+		return "", recordUpload(lg, cfg, "failed", "s3 object")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeoutOf(cfg, "step", defaultStepTimeout))
+	defer cancel()
+	if err := s3.Put(ctx, s3.Target{
+		Endpoint:  cfg.S3.Endpoint,
+		Bucket:    cfg.S3.Bucket,
+		Prefix:    cfg.S3.Prefix,
+		Region:    cfg.S3.Region,
+		AccessKey: access,
+		SecretKey: secret,
+	}, objects); err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, access) || strings.Contains(msg, secret) {
+			msg = "s3 put"
+		}
+		return "", recordUpload(lg, cfg, "failed", msg)
+	}
+	return cfg.S3.Bucket + "/" + prefixedKey(cfg.S3.Prefix, "reports/"+lg.ID()+".md"), recordUpload(lg, cfg, "ok", "")
+}
+
+func uploadObjects(lg *runlog.Log, reportPath, status string) ([]s3.Object, error) {
+	var objects []s3.Object
+	if reportPath != "" {
+		body, err := os.ReadFile(reportPath) //nolint:gosec // 이 실행이 방금 쓴 보고서
+		if err != nil {
+			return nil, err
+		}
+		objects = append(objects, s3.Object{Key: "reports/" + lg.ID() + ".md", Body: body})
+	}
+	if err := lg.Sync(); err != nil {
+		return nil, err
+	}
+	jsonl, err := os.ReadFile(filepath.Join(lg.Dir(), lg.ID()+".jsonl")) //nolint:gosec // 이 실행의 로그 디렉터리
+	if err != nil {
+		return nil, err
+	}
+	objects = append(objects, s3.Object{Key: "logs/" + lg.ID() + ".jsonl", Body: jsonl})
+	snap, err := lg.Snapshot(status)
+	if err != nil {
+		return nil, err
+	}
+	objects = append(objects, s3.Object{Key: "logs/" + lg.ID() + ".json", Body: snap})
+	collectDir := filepath.Join(lg.Dir(), "collects", lg.ID())
+	entries, err := os.ReadDir(collectDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return objects, nil
+		}
+		return nil, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(collectDir, entry.Name())) //nolint:gosec // 이 실행의 수집 파일
+		if err != nil {
+			return nil, err
+		}
+		objects = append(objects, s3.Object{Key: "collects/" + lg.ID() + "/" + entry.Name(), Body: body})
+	}
+	return objects, nil
+}
+
+func prefixedKey(prefix, key string) string {
+	prefix = strings.Trim(prefix, "/")
+	if prefix == "" {
+		return key
+	}
+	return prefix + "/" + key
+}
+
+func recordUpload(lg *runlog.Log, cfg config.Config, status, errText string) error {
+	stepErr := lg.Step(runlog.Event{
+		Step:    "upload",
+		Status:  status,
+		Command: "upload",
+		Host:    cfg.Server.Host,
+		User:    cfg.Server.User,
+		Error:   errText,
+	})
+	if status == "failed" {
+		return errors.Join(errors.New("upload"), stepErr)
+	}
+	return stepErr
 }
 
 func errorClass(err error) string {

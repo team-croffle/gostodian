@@ -44,6 +44,14 @@ report:
   max_output_tokens: 8192
   template_hash_file: logs/report_template.sha256
 
+# endpoint와 bucket이 둘 다 비어 있으면 업로드하지 않고 로컬 보고서만 남긴다.
+# 키 권한은 PutObject만. 클라이언트 KMS 키는 쓰지 않는다.
+s3:
+  endpoint: ""
+  bucket: ""
+  prefix: ""
+  region: us-east-1
+
 # 경로는 compose의 GOSTODIAN_*_FILE 이 있으면 그쪽이 이긴다.
 secrets:
   ai_api_key_file: secrets/ai_api_key

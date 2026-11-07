@@ -24,5 +24,6 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM gcr.io/distroless/static-debian12:nonroot
 ENV TZ=Asia/Seoul
 COPY --from=build /out/gostodian /usr/local/bin/gostodian
+COPY --from=build /src/templates/report_template.md /templates/report_template.md
 USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/gostodian"]

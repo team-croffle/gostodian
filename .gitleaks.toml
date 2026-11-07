@@ -3,7 +3,8 @@
 title = "gostodian"
 
 [allowlist]
-description = "redact package golden fixtures use synthetic secrets"
+description = "synthetic secrets in redact fixtures and the public AWS signature example"
 paths = [
   '''(^|/)internal/redact/testdata/''',
+  '''(^|/)internal/s3/s3_test\.go''',
 ]

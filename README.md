@@ -81,6 +81,7 @@ cp config/config.yaml.example config/config.yaml
 | `report.api_url` / `model` | OpenAI 호환 Chat Completions base와 모델. 제공자 이름은 코드에 없음 |
 | `report.template_file` | 보고서 뼈대 마크다운. 기본 `templates/report_template.md`. 내장하지 않음 |
 | `report.timeout` / `max_input_runes` / `max_output_tokens` | AI 호출 한도. 실패하면 같은 템플릿으로 로컬 채움 |
+| `s3.endpoint` / `bucket` / `prefix` | MinIO 주소, 버킷, 그 앞 경로. 주소와 버킷이 비어 있으면 올리지 않고 로컬에 남긴다 |
 
 보고서 API 주소와 모델 이름, MinIO 버킷과 프리픽스도 이 설정 파일에 둔다. 코드에 제공자 이름이나 버킷 이름을 넣지 않는다. 템플릿이 바뀌면 AI 요청에 전문과 캐시 초기화 지시를 넣고, 같으면 동일 형식으로 작성하라고만 한다.
 
