@@ -36,7 +36,7 @@
 5. `update`를 시작하고 `update-status`가 `done` 또는 `failed`가 될 때까지 본다.
 6. 재부팅 전 `boot_id`(부팅마다 바뀌는 값)를 저장하고 `reboot`를 호출한다. 지수 백오프(기다리는 시간을 늘려 가며 다시 접속)로 재접속한 뒤, `timeouts.reboot` 안에 `boot_id`가 바뀌었는지 확인한다.
 7. `collect-logs`로 로그 종류 `dnf`, `boot`, `secure`, `fail2ban`, `audit`을 읽고, `resources`로 RAM, CPU, Storage를 읽는다. 결과는 이력과 `logs/collects/<실행ID>/`에 남는다. 한 건이 실패해도 나머지 수집과 이후 기동은 이어가고, 빠진 항목은 실패로 기록한다.
-8. 수집한 글을 카테고리 규칙으로 거르고, 리댁션(호스트명, IP, 계정, 토큰을 가림)한 뒤 규칙으로 이상 여부를 판정한다. 매칭이 0건인 카테고리는 「이상 없음」이다.
+8. 수집한 글에서 같은 줄을 합치고, 리댁션(호스트명, IP, 계정, 토큰을 가림)한다. 단어로 줄을 빼거나 이상 여부를 판정하지 않는다.
 9. `docker_order`의 역순으로 서비스를 켜고 `health`로 컨테이너와 포트 Listening(접속을 받는 상태)을 본다.
 10. 실행 ID로 보고서 초안을 만든다. 로그는 구조화된 필드로 넣고 경계를 명시한다. AI 호출이 실패하면 고정 템플릿으로 보고서를 쓴다. LLM 출력은 실행하지 않는다.
 11. `health`가 성공한 뒤에만 MinIO로 올린다. `reports/`는 보고서, `logs/`는 실행 로그, `collects/`는 수집 아카이브이고, 셋은 같은 실행 ID다. 업로드 키는 PutObject만 한다.
@@ -73,9 +73,9 @@ cp config/config.yaml.example config/config.yaml
 | `ssh.identity_file` / `known_hosts_file` | SSH 개인키, 홈랩 호스트 키 파일 경로 |
 | `pipeline.docker_order` | 정지 순서. 기동은 역순. 서비스 이름은 코드에 두지 않고 여기에만 둔다 |
 | `pipeline.timeouts.step` / `reboot` | 게이트 호출 1회 제한 시간(기본 10분), 재부팅 뒤 돌아오기까지 제한 시간(기본 15분) |
-| `pipeline.filter` | 종류별 include/exclude, 같은 줄 합치기, 길이 상한. 상한을 비우면 262144글자. 넘치면 본문을 자르고 이력에 남긴다 |
+| `pipeline.filter` | 같은 줄 합치기, 길이 상한. 상한을 비우면 262144글자. 넘치면 본문을 자르고 이력에 남긴다. 단어 include/exclude는 줄을 빼지 않는다 |
 | `pipeline.redact` | 로그에 더 나오는 호스트명과 계정. IP, 토큰, 웹훅 주소는 설정 없이 가린다 |
-| `pipeline.rules` | 종류별 판정 문자열. 필터와 리댁션 뒤의 본문에서 맞으면 그 줄을 센다. 0줄이면 「이상 없음」 |
+| `pipeline.rules` | 실행 중 단어로 판정하지 않는다. 판정은 로그를 본 모델이 적는다 |
 | `secrets.*_file` | 시크릿 파일 경로. compose의 `GOSTODIAN_*_FILE`이 있으면 그쪽이 우선 |
 | `vpn.interface` | 비어 있으면 VPN 검사를 하지 않는다. 예: `wg0` |
 | `report.api_url` / `model` | OpenAI 호환 Chat Completions base와 모델. 제공자 이름은 코드에 없음 |

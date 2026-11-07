@@ -32,9 +32,9 @@ cp config/config.yaml.example config/config.yaml
 | `pipeline.docker_order` | 정지 순서. 기동은 역순. 홈랩 허용 목록과 같은 이름만 적는다 |
 | `pipeline.timeouts.step` | 게이트 호출 1회의 제한 시간. 기본 10분 |
 | `pipeline.timeouts.reboot` | 재부팅 뒤 돌아올 때까지의 제한 시간. 기본 15분 |
-| `pipeline.filter` | 종류별 include/exclude, 같은 줄 합치기, 길이 상한. 상한을 비우면 262144글자 |
+| `pipeline.filter` | 같은 줄 합치기, 길이 상한. 상한을 비우면 262144글자. 단어 include/exclude는 줄을 빼지 않는다 |
 | `pipeline.redact` | 로그에 더 나오는 호스트명과 계정. IP, 토큰, 웹훅 주소는 설정 없이 가린다 |
-| `pipeline.rules` | 판정 문자열. 맞은 줄이 0이면 「이상 없음」 |
+| `pipeline.rules` | 실행 중 단어로 판정하지 않는다. 판정은 로그를 본 모델이 적는다 |
 | `report.api_url` / `model` | OpenAI 호환 Chat Completions base와 모델. 예시 값은 Claude 쪽이다. 제공자 이름은 코드에 없다 |
 | `report.template_file` | 보고서 뼈대. 기본 `templates/report_template.md` |
 | `report.timeout` | AI 호출 제한 시간. 기본 120초 |
@@ -179,9 +179,9 @@ Discord 웹훅 파일은 점검 머신에만 둔다. 알림 문장에 웹훅 주
 5. `update`를 시작하고 `update-status`가 `done` 또는 `failed`가 될 때까지 본다.
 6. `boot_id`를 저장하고 `reboot`를 호출한다. `timeouts.reboot` 안에 `boot_id`가 바뀌면 재접속으로 본다.
 7. `dnf`, `boot`, `secure`, `fail2ban`, `audit`과 RAM, CPU, Storage를 읽는다. 한 종류가 실패해도 나머지 수집과 이후 기동은 이어간다.
-8. 수집 본문을 거르고 가린 뒤 규칙으로 판정한다. 맞은 줄이 0이면 「이상 없음」, 하나 이상이면 「이상 있음」, 수집이 없으면 「수집 없음」이다.
+8. 수집 본문에서 같은 줄을 합치고 가린다. 단어로 줄을 빼거나 이상 여부를 판정하지 않는다.
 9. `docker_order`의 역순으로 서비스를 켜고 `health`를 본다.
-10. `templates/report_template.md` 형식으로 보고서를 쓴다. 템플릿이 바뀌었거나 첫 실행이면 AI 요청에 템플릿 전문을 넣는다. 같으면 같은 형식으로 쓰라고만 한다. AI가 실패하면 같은 템플릿에 실행 ID, 판정, 수집 요약만 채워 남긴다. AI가 돌려준 글은 실행하지 않는다.
+10. `templates/report_template.md` 형식으로 보고서를 쓴다. 템플릿이 바뀌었거나 첫 실행이면 AI 요청에 템플릿 전문을 넣는다. 같으면 같은 형식으로 쓰라고만 한다. 모델은 로그를 본 뒤 종류별 판정을 보고서 끝에 적는다. AI가 실패하면 같은 템플릿에 실행 ID와 수집 요약만 채우고, 수집된 종류의 판정은 「판정 없음」이다. AI가 돌려준 글은 실행하지 않는다.
 11. `health`가 성공했을 때만 MinIO에 올린다.
 12. 완료 알림에 판정 요약과 보고서 위치를 넣는다. 게이트가 거부한 기록이 있으면 보고서에 남기고, 완료 알림과 따로 알린다.
 
