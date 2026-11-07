@@ -80,10 +80,7 @@ func TestLoadEmptyPath(t *testing.T) {
 func TestEnvOverlaysSecretPaths(t *testing.T) {
 	t.Setenv("GOSTODIAN_SSH_KEY_FILE", "/run/secrets/ssh_key")
 	t.Setenv("GOSTODIAN_KNOWN_HOSTS_FILE", "/run/secrets/known_hosts")
-	t.Setenv("GOSTODIAN_AI_API_KEY_FILE", "/run/secrets/ai_api_key")
-	t.Setenv("GOSTODIAN_S3_ACCESS_KEY_FILE", "/run/secrets/s3_access_key")
-	t.Setenv("GOSTODIAN_S3_SECRET_KEY_FILE", "/run/secrets/s3_secret_key")
-	t.Setenv("GOSTODIAN_DISCORD_WEBHOOK_FILE", "/run/secrets/discord_webhook")
+	t.Setenv("GOSTODIAN_SECRETS_FILE", "/run/secrets/secrets")
 
 	cfg, err := Load(testdata("valid.yaml"))
 	if err != nil {
@@ -95,17 +92,8 @@ func TestEnvOverlaysSecretPaths(t *testing.T) {
 	if cfg.SSH.KnownHostsFile != "/run/secrets/known_hosts" {
 		t.Fatalf("known_hosts = %q", cfg.SSH.KnownHostsFile)
 	}
-	if cfg.Secrets.AIAPIKeyFile != "/run/secrets/ai_api_key" {
-		t.Fatalf("ai = %q", cfg.Secrets.AIAPIKeyFile)
-	}
-	if cfg.Secrets.S3AccessKeyFile != "/run/secrets/s3_access_key" {
-		t.Fatalf("s3 access = %q", cfg.Secrets.S3AccessKeyFile)
-	}
-	if cfg.Secrets.S3SecretKeyFile != "/run/secrets/s3_secret_key" {
-		t.Fatalf("s3 secret = %q", cfg.Secrets.S3SecretKeyFile)
-	}
-	if cfg.Secrets.DiscordWebhookFile != "/run/secrets/discord_webhook" {
-		t.Fatalf("discord = %q", cfg.Secrets.DiscordWebhookFile)
+	if cfg.Secrets.File != "/run/secrets/secrets" {
+		t.Fatalf("secrets = %q", cfg.Secrets.File)
 	}
 }
 
@@ -133,6 +121,25 @@ func TestReadSecretFile(t *testing.T) {
 func TestReadSecretFileEmptyPath(t *testing.T) {
 	if _, err := ReadSecretFile("  "); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestReadSecretValue(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "secrets")
+	body := "AI_API_KEY=sk-test\nS3_ACCESS_KEY=access\n# comment\nS3_SECRET_KEY=sec=ret\nDISCORD_WEBHOOK=https://discord.example/hook\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadSecretValue(path, SecretS3SecretKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "sec=ret" {
+		t.Fatalf("got %q", got)
+	}
+	if _, err := ReadSecretValue(path, "MISSING"); err == nil || strings.Contains(err.Error(), "sec=ret") {
+		t.Fatalf("err = %v", err)
 	}
 }
 

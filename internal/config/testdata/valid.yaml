@@ -15,7 +15,4 @@ pipeline:
     reboot: 15m
 
 secrets:
-  ai_api_key_file: testdata/dummy_secret
-  s3_access_key_file: testdata/dummy_secret
-  s3_secret_key_file: testdata/dummy_secret
-  discord_webhook_file: testdata/dummy_secret
+  file: testdata/dummy_secret

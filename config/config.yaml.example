@@ -69,12 +69,10 @@ s3:
   prefix: ""
   region: us-east-1
 
-# 경로는 compose의 GOSTODIAN_*_FILE 이 있으면 그쪽이 이긴다.
+# 경로는 compose의 GOSTODIAN_SECRETS_FILE 이 있으면 그쪽이 이긴다.
+# 파일 줄은 AI_API_KEY, S3_ACCESS_KEY, S3_SECRET_KEY, DISCORD_WEBHOOK.
 secrets:
-  ai_api_key_file: secrets/ai_api_key
-  s3_access_key_file: secrets/s3_access_key
-  s3_secret_key_file: secrets/s3_secret_key
-  discord_webhook_file: secrets/discord_webhook
+  file: secrets/secrets
 
 # 비어 있으면 VPN 검사를 하지 않는다. 예: wg0
 vpn:

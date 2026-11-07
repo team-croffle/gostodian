@@ -98,13 +98,10 @@ type S3Config struct {
 	Region   string `yaml:"region"`
 }
 
-// SecretsConfig는 AI/S3/Discord 시크릿의 파일 경로만 가진다.
-// Discord 웹훅 파일은 알림을 보낼 때 읽는다. AI, S3 파일은 보고서와 업로드 때 읽는다.
+// SecretsConfig는 AI, S3, Discord 값을 담은 파일 경로만 가진다.
+// 파일 안은 AI_API_KEY, S3_ACCESS_KEY, S3_SECRET_KEY, DISCORD_WEBHOOK 줄이다.
 type SecretsConfig struct {
-	AIAPIKeyFile       string `yaml:"ai_api_key_file"`
-	S3AccessKeyFile    string `yaml:"s3_access_key_file"`
-	S3SecretKeyFile    string `yaml:"s3_secret_key_file"`
-	DiscordWebhookFile string `yaml:"discord_webhook_file"`
+	File string `yaml:"file"`
 }
 
 // DefaultConfigPath는 --config가 없을 때 쓴다.
@@ -153,17 +150,8 @@ func applyEnvPaths(cfg *Config) {
 	if p := envPath("GOSTODIAN_KNOWN_HOSTS_FILE"); p != "" {
 		cfg.SSH.KnownHostsFile = p
 	}
-	if p := envPath("GOSTODIAN_AI_API_KEY_FILE"); p != "" {
-		cfg.Secrets.AIAPIKeyFile = p
-	}
-	if p := envPath("GOSTODIAN_S3_ACCESS_KEY_FILE"); p != "" {
-		cfg.Secrets.S3AccessKeyFile = p
-	}
-	if p := envPath("GOSTODIAN_S3_SECRET_KEY_FILE"); p != "" {
-		cfg.Secrets.S3SecretKeyFile = p
-	}
-	if p := envPath("GOSTODIAN_DISCORD_WEBHOOK_FILE"); p != "" {
-		cfg.Secrets.DiscordWebhookFile = p
+	if p := envPath("GOSTODIAN_SECRETS_FILE"); p != "" {
+		cfg.Secrets.File = p
 	}
 }
 

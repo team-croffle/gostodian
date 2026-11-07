@@ -109,7 +109,7 @@ func SendFile(path string, n Notice) error {
 	if strings.TrimSpace(path) == "" {
 		return nil
 	}
-	webhookURL, err := config.ReadSecretFile(path)
+	webhookURL, err := config.ReadSecretValue(path, config.SecretDiscordWebhook)
 	if err != nil {
 		return err
 	}

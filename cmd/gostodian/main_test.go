@@ -1077,7 +1077,7 @@ func TestRunNotifiesVPNRequired(t *testing.T) {
 
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")
-	body := "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: secrets/id_ed25519\n  known_hosts_file: secrets/known_hosts\nsecrets:\n  discord_webhook_file: secrets/discord_webhook\nvpn:\n  interface: wg0\n"
+	body := "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: secrets/id_ed25519\n  known_hosts_file: secrets/known_hosts\nsecrets:\n  file: secrets/secrets\nvpn:\n  interface: wg0\n"
 	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -1278,10 +1278,10 @@ func TestRunUploadsAfterHealth(t *testing.T) {
 	connect = func(config.Config) runner { return &stubRunner{} }
 
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "access"), "access-key\n")
-	writeFile(t, filepath.Join(dir, "secret"), "secret-key\n")
+	secretsPath := filepath.Join(dir, "secrets")
+	writeFile(t, secretsPath, "S3_ACCESS_KEY=access-key\nS3_SECRET_KEY=secret-key\n")
 	cfgPath := filepath.Join(dir, "config.yaml")
-	writeFile(t, cfgPath, "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: k\n  known_hosts_file: n\ns3:\n  endpoint: "+srv.URL+"\n  bucket: lab\n  prefix: gostodian\nsecrets:\n  s3_access_key_file: "+yamlQuote(filepath.Join(dir, "access"))+"\n  s3_secret_key_file: "+yamlQuote(filepath.Join(dir, "secret"))+"\n")
+	writeFile(t, cfgPath, "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: k\n  known_hosts_file: n\ns3:\n  endpoint: "+srv.URL+"\n  bucket: lab\n  prefix: gostodian\nsecrets:\n  file: "+yamlQuote(secretsPath)+"\n")
 	logDir := t.TempDir()
 	if err := run([]string{"run", "--config", cfgPath, "--log-dir", logDir}, io.Discard, io.Discard); err != nil {
 		t.Fatal(err)
@@ -1322,10 +1322,10 @@ func TestRunUploadFailureKeepsLocalReport(t *testing.T) {
 	t.Cleanup(srv.Close)
 	connect = func(config.Config) runner { return &stubRunner{} }
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "access"), "access-key\n")
-	writeFile(t, filepath.Join(dir, "secret"), "secret-key\n")
+	secretsPath := filepath.Join(dir, "secrets")
+	writeFile(t, secretsPath, "S3_ACCESS_KEY=access-key\nS3_SECRET_KEY=secret-key\n")
 	cfgPath := filepath.Join(dir, "config.yaml")
-	writeFile(t, cfgPath, "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: k\n  known_hosts_file: n\ns3:\n  endpoint: "+srv.URL+"\n  bucket: lab\nsecrets:\n  s3_access_key_file: "+yamlQuote(filepath.Join(dir, "access"))+"\n  s3_secret_key_file: "+yamlQuote(filepath.Join(dir, "secret"))+"\n")
+	writeFile(t, cfgPath, "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: k\n  known_hosts_file: n\ns3:\n  endpoint: "+srv.URL+"\n  bucket: lab\nsecrets:\n  file: "+yamlQuote(secretsPath)+"\n")
 	logDir := t.TempDir()
 	err := run([]string{"run", "--config", cfgPath, "--log-dir", logDir}, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "upload") {
@@ -1370,10 +1370,10 @@ func TestRunHealthFailureSkipsUpload(t *testing.T) {
 		}}
 	}
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "access"), "access-key\n")
-	writeFile(t, filepath.Join(dir, "secret"), "secret-key\n")
+	secretsPath := filepath.Join(dir, "secrets")
+	writeFile(t, secretsPath, "S3_ACCESS_KEY=access-key\nS3_SECRET_KEY=secret-key\n")
 	cfgPath := filepath.Join(dir, "config.yaml")
-	writeFile(t, cfgPath, "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: k\n  known_hosts_file: n\ns3:\n  endpoint: "+srv.URL+"\n  bucket: lab\nsecrets:\n  s3_access_key_file: "+yamlQuote(filepath.Join(dir, "access"))+"\n  s3_secret_key_file: "+yamlQuote(filepath.Join(dir, "secret"))+"\n")
+	writeFile(t, cfgPath, "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: k\n  known_hosts_file: n\ns3:\n  endpoint: "+srv.URL+"\n  bucket: lab\nsecrets:\n  file: "+yamlQuote(secretsPath)+"\n")
 	err := run([]string{"run", "--config", cfgPath, "--log-dir", t.TempDir()}, io.Discard, io.Discard)
 	if err == nil || puts != 0 {
 		t.Fatalf("err = %v puts = %d", err, puts)
@@ -1401,10 +1401,10 @@ func TestRunRejectionIsSeparateNotice(t *testing.T) {
 		}}
 	}
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "access"), "access-key\n")
-	writeFile(t, filepath.Join(dir, "secret"), "secret-key\n")
+	secretsPath := filepath.Join(dir, "secrets")
+	writeFile(t, secretsPath, "S3_ACCESS_KEY=access-key\nS3_SECRET_KEY=secret-key\n")
 	cfgPath := filepath.Join(dir, "config.yaml")
-	writeFile(t, cfgPath, "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: k\n  known_hosts_file: n\npipeline:\n  docker_order:\n    - nope\ns3:\n  endpoint: "+srv.URL+"\n  bucket: lab\nsecrets:\n  s3_access_key_file: "+yamlQuote(filepath.Join(dir, "access"))+"\n  s3_secret_key_file: "+yamlQuote(filepath.Join(dir, "secret"))+"\n")
+	writeFile(t, cfgPath, "server:\n  host: homelab.example\n  user: gostodian\nssh:\n  identity_file: k\n  known_hosts_file: n\npipeline:\n  docker_order:\n    - nope\ns3:\n  endpoint: "+srv.URL+"\n  bucket: lab\nsecrets:\n  file: "+yamlQuote(secretsPath)+"\n")
 	logDir := t.TempDir()
 	if err := run([]string{"run", "--config", cfgPath, "--log-dir", logDir}, io.Discard, io.Discard); err == nil {
 		t.Fatal("expected rejection to fail the run")

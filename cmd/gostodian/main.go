@@ -720,7 +720,7 @@ func recordRun(lg *runlog.Log, cfg config.Config, result ssh.Result, runErr erro
 // 전송이 거절되면 그 사실만 로컬 이력에 남긴다. 점검 결과는 바꾸지 않는다.
 // 에러 문장에 웹훅 주소는 넣지 않는다.
 func deliver(lg *runlog.Log, cfg config.Config, n discord.Notice) error {
-	if err := notify(cfg.Secrets.DiscordWebhookFile, n); err != nil {
+	if err := notify(cfg.Secrets.File, n); err != nil {
 		return lg.Step(runlog.Event{
 			Step:    "notify",
 			Status:  "failed",
@@ -850,7 +850,7 @@ func writeReport(lg *runlog.Log, cfg config.Config, bodies map[string]string, re
 	if useAI && readErr == nil {
 		d.APIURL = cfg.Report.APIURL
 		d.Model = cfg.Report.Model
-		key, err := config.ReadSecretFile(cfg.Secrets.AIAPIKeyFile)
+		key, err := config.ReadSecretValue(cfg.Secrets.File, config.SecretAIAPIKey)
 		if err == nil {
 			d.APIKey = key
 		}
@@ -930,11 +930,11 @@ func uploadRun(lg *runlog.Log, cfg config.Config, reportPath string, maintOK boo
 	if strings.TrimSpace(cfg.S3.Endpoint) == "" || strings.TrimSpace(cfg.S3.Bucket) == "" {
 		return "", nil
 	}
-	access, err := config.ReadSecretFile(cfg.Secrets.S3AccessKeyFile)
+	access, err := config.ReadSecretValue(cfg.Secrets.File, config.SecretS3AccessKey)
 	if err != nil || access == "" {
 		return "", recordUpload(lg, cfg, "failed", "s3 key")
 	}
-	secret, err := config.ReadSecretFile(cfg.Secrets.S3SecretKeyFile)
+	secret, err := config.ReadSecretValue(cfg.Secrets.File, config.SecretS3SecretKey)
 	if err != nil || secret == "" {
 		return "", recordUpload(lg, cfg, "failed", "s3 key")
 	}

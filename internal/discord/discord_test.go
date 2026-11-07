@@ -157,7 +157,7 @@ func TestSendFileRejectsPlainHTTP(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hook")
 	const token = "secret-token"
-	if err := os.WriteFile(path, []byte("http://discord.example/api/webhooks/"+token), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("DISCORD_WEBHOOK=http://discord.example/api/webhooks/"+token+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	err := SendFile(path, Notice{Kind: KindStart})
