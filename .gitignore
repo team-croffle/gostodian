@@ -5,7 +5,8 @@
 *.exe
 
 # 시크릿 / 로컬 상태 — 절대 커밋 금지
-/secrets/
+/secrets/*
+!/secrets/secrets.example
 *.pem
 *.key
 id_ed25519*
