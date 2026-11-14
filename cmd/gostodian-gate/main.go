@@ -8,9 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"unicode/utf8"
 
 	"gostodian/internal/collect"
 )
+
+// failureReasonLimit는 헬퍼 실패 이유를 점검 머신 이력으로 넘길 때 자르는 글자 수다.
+const failureReasonLimit = 500
 
 // bootIDPath는 부팅마다 바뀌는 커널 값이다. 읽기만 한다.
 const bootIDPath = "/proc/sys/kernel/random/boot_id"
@@ -39,7 +43,36 @@ var runService = func(verb, name string) ([]byte, error) {
 		return nil, err
 	}
 	// #nosec G204 -- argv is a fixed helper path and allowlisted verb from serviceArgv
-	return exec.CommandContext(ctx, argv[0], argv[1:]...).Output()
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, helperFailure(err)
+	}
+	return out, nil
+}
+
+// helperFailure는 헬퍼가 실패했을 때 stderr의 이유를 에러 문장에 붙인다.
+// stdout은 넘기지 않는다. 이유가 없으면 종료 코드만 남긴다.
+func helperFailure(err error) error {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return err
+	}
+	reason := capReason(string(exitErr.Stderr))
+	code := exitErr.ExitCode()
+	if reason == "" {
+		return fmt.Errorf("exit status %d", code)
+	}
+	return fmt.Errorf("exit status %d: %s", code, reason)
+}
+
+func capReason(s string) string {
+	s = strings.TrimSpace(s)
+	if utf8.RuneCountInString(s) <= failureReasonLimit {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:failureReasonLimit])
 }
 
 // serviceArgv는 게이트 동사를 헬퍼 인자 목록으로 바꾼다.

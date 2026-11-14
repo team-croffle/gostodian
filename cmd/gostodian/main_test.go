@@ -526,7 +526,7 @@ func TestRunCollectFailureContinues(t *testing.T) {
 	}
 	var sawFail, sawHealth bool
 	for _, step := range history.Steps {
-		if step.Command == "collect-logs secure" && step.Status == "failed" {
+		if step.Command == "collect-logs secure" && step.Status == "failed" && strings.Contains(step.Error, "missing") {
 			sawFail = true
 		}
 		if step.Command == ssh.HealthVerb && step.Status == "ok" {
@@ -657,7 +657,7 @@ func TestRunUpdateFailureStops(t *testing.T) {
 				case ssh.UpdateVerb:
 					return ssh.Result{Stdout: "started\n"}, nil
 				case ssh.UpdateStatusVerb:
-					return ssh.Result{Stdout: "failed\n"}, nil
+					return ssh.Result{Stdout: "failed\nCannot find a valid baseurl for repo\n"}, nil
 				default:
 					t.Fatalf("unexpected %s", verb)
 					return ssh.Result{}, nil
@@ -679,7 +679,7 @@ func TestRunUpdateFailureStops(t *testing.T) {
 		t.Fatalf("history = %+v", history)
 	}
 	last := history.Steps[len(history.Steps)-1]
-	if last.Command != ssh.UpdateStatusVerb || last.Status != "failed" {
+	if last.Command != ssh.UpdateStatusVerb || last.Status != "failed" || !strings.Contains(last.Error, "Cannot find a valid baseurl for repo") {
 		t.Fatalf("last = %+v", last)
 	}
 }

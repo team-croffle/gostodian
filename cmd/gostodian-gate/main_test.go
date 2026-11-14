@@ -3,7 +3,10 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -442,6 +445,39 @@ func stubBootID(t *testing.T, text string, err error) {
 		}
 		return []byte(text), nil
 	}
+}
+
+func TestHelperFailureKeepsStderr(t *testing.T) {
+	switch os.Getenv("GOSTODIAN_HELPER_FAIL") {
+	case "reason":
+		fmt.Fprintln(os.Stderr, "open failed")
+		os.Exit(3)
+	case "empty":
+		os.Exit(2)
+	}
+
+	withReason := helperChild(t, "reason")
+	got := helperFailure(withReason)
+	if got == nil || !strings.Contains(got.Error(), "exit status 3") || !strings.Contains(got.Error(), "open failed") {
+		t.Fatalf("err = %v", got)
+	}
+
+	without := helperChild(t, "empty")
+	got = helperFailure(without)
+	if got == nil || got.Error() != "exit status 2" {
+		t.Fatalf("err = %v", got)
+	}
+}
+
+func helperChild(t *testing.T, mode string) error {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=TestHelperFailureKeepsStderr")
+	cmd.Env = append(os.Environ(), "GOSTODIAN_HELPER_FAIL="+mode)
+	_, err := cmd.Output()
+	if err == nil {
+		t.Fatal("child exited 0")
+	}
+	return err
 }
 
 func assertRejected(t *testing.T, command string, names map[string]struct{}, want string) {

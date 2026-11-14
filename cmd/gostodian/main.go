@@ -376,13 +376,13 @@ func runUpdate(lg *runlog.Log, cfg config.Config, client runner, stdout, stderr 
 			status = "failed"
 			code := result.ExitCode
 			exitCode = &code
-			errText = fmt.Sprintf("gate: exit %d", code)
+			errText = gateFailureText(code, result.Stderr)
 		case parseErr != nil:
 			status = "failed"
 			errText = parseErr.Error()
 		case state == "failed":
 			status = "failed"
-			errText = "update-status: failed"
+			errText = updateFailureText(result.Stdout, result.Stderr)
 		}
 		if err := lg.Step(runlog.Event{
 			Step:     ssh.UpdateStatusVerb,
@@ -590,7 +590,7 @@ func runGateStep(lg *runlog.Log, cfg config.Config, client runner, verb, name, c
 		exitCode = &code
 		if code != 0 {
 			status = "failed"
-			errText = fmt.Sprintf("gate: exit %d", code)
+			errText = gateFailureText(code, result.Stderr)
 		}
 	}
 	if err := lg.Step(runlog.Event{
@@ -644,6 +644,48 @@ func redactOptions(cfg config.Config) redact.Options {
 		Hosts:    append([]string{cfg.Server.Host}, cfg.Pipeline.Redact.Hostnames...),
 		Accounts: append([]string{cfg.Server.User}, cfg.Pipeline.Redact.Accounts...),
 	}
+}
+
+// gateFailureText는 실패한 단계의 종료 코드와 헬퍼가 보낸 이유를 이력 문장으로 만든다.
+func gateFailureText(code int, stderr string) string {
+	text := fmt.Sprintf("gate: exit %d", code)
+	reason := capFailureReason(stderr)
+	if reason == "" {
+		return text
+	}
+	return text + ": " + reason
+}
+
+// updateFailureText는 update-status가 failed일 때 첫 단어 뒤의 이유까지 이력에 남긴다.
+// 첫 줄이 failed만이면 그 문장만 남긴다.
+func updateFailureText(stdout, stderr string) string {
+	text := "update-status: failed"
+	reason := strings.TrimSpace(stderr)
+	if rest := updateFailureRest(stdout); rest != "" {
+		reason = rest
+	}
+	if reason == "" {
+		return text
+	}
+	return text + ": " + capFailureReason(reason)
+}
+
+func capFailureReason(s string) string {
+	s = strings.TrimSpace(s)
+	runes := []rune(s)
+	if len(runes) <= 500 {
+		return s
+	}
+	return string(runes[:500])
+}
+
+func updateFailureRest(stdout string) string {
+	text := strings.TrimSpace(stdout)
+	line, rest, found := strings.Cut(text, "\n")
+	if !found || strings.ToLower(strings.TrimSpace(line)) != "failed" {
+		return ""
+	}
+	return strings.TrimSpace(rest)
 }
 
 func parseUpdateStatus(stdout string) (string, error) {
