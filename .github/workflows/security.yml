@@ -24,8 +24,8 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -37,7 +37,7 @@ jobs:
 
       # govulncheck SARIF can contain duplicate stack entries that upload-sarif rejects.
       # Keep upload best-effort; the gate step below is the real failure condition.
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: github/codeql-action/upload-sarif@v4
         if: always()
         continue-on-error: true
         with:
@@ -55,8 +55,8 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -67,7 +67,7 @@ jobs:
           go run github.com/securego/gosec/v2/cmd/gosec@latest \
             -no-fail -fmt sarif -out gosec.sarif -severity low -confidence low ./...
 
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: gosec.sarif
@@ -89,19 +89,19 @@ jobs:
       security-events: write
       actions: read
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
 
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@v4
         with:
           languages: go
           build-mode: autobuild
           queries: security-extended
 
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4
         with:
           category: "/language:go"
 
@@ -110,7 +110,7 @@ jobs:
     name: gitleaks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0   # 전체 히스토리 스캔
 
@@ -124,7 +124,7 @@ jobs:
     name: trivy (config)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Dockerfile / compose 오설정 스캔
         run: |
           docker run --rm -v "$PWD:/w" -w /w aquasec/trivy:latest config \
@@ -135,8 +135,8 @@ jobs:
     name: trivy (image)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: docker/build-push-action@v6
+      - uses: actions/checkout@v7
+      - uses: docker/build-push-action@v7
         with:
           context: .
           push: false
