@@ -24,8 +24,8 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -55,8 +55,8 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -89,8 +89,8 @@ jobs:
       security-events: write
       actions: read
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -110,7 +110,7 @@ jobs:
     name: gitleaks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0   # 전체 히스토리 스캔
 
@@ -124,7 +124,7 @@ jobs:
     name: trivy (config)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Dockerfile / compose 오설정 스캔
         run: |
           docker run --rm -v "$PWD:/w" -w /w aquasec/trivy:latest config \
@@ -135,8 +135,8 @@ jobs:
     name: trivy (image)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: docker/build-push-action@v6
+      - uses: actions/checkout@v7
+      - uses: docker/build-push-action@v7
         with:
           context: .
           push: false
